@@ -1,0 +1,153 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ── CSS Variables ─────────────────────────────────── */
+:root {
+  --bg-primary: #ffffff;
+  --bg-surface: #f4f4f5;
+  --bg-elevated: #e4e4e7;
+  --text-primary: #09090b;
+  --text-secondary: #52525b;
+  --text-muted: #a1a1aa;
+  --border: #e4e4e7;
+  --accent: #6366f1;
+  --accent-hover: #4f46e5;
+  --accent-light: #eef2ff;
+  --bubble-self: #6366f1;
+  --bubble-self-text: #ffffff;
+  --bubble-other: #f4f4f5;
+  --bubble-other-text: #09090b;
+  --danger: #ef4444;
+  --success: #22c55e;
+  --ad-bg: #fafafa;
+  --ad-border: #e4e4e7;
+}
+
+.dark {
+  --bg-primary: #09090b;
+  --bg-surface: #18181b;
+  --bg-elevated: #27272a;
+  --text-primary: #fafafa;
+  --text-secondary: #a1a1aa;
+  --text-muted: #71717a;
+  --border: #27272a;
+  --accent: #818cf8;
+  --accent-hover: #6366f1;
+  --accent-light: #1e1b4b;
+  --bubble-self: #4f46e5;
+  --bubble-self-text: #ffffff;
+  --bubble-other: #27272a;
+  --bubble-other-text: #fafafa;
+  --danger: #f87171;
+  --success: #4ade80;
+  --ad-bg: #18181b;
+  --ad-border: #27272a;
+}
+
+/* ── Base ────────────────────────────────────────────── */
+html {
+  height: 100%;
+  height: -webkit-fill-available;
+}
+
+body {
+  background-color: var(--bg-primary);
+  color: var(--text-primary);
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  height: 100dvh;
+  overflow: hidden;
+}
+
+/* ── Scrollbars ──────────────────────────────────────── */
+::-webkit-scrollbar { width: 4px; height: 4px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+::-webkit-scrollbar-thumb:hover { background: var(--text-muted); }
+
+/* ── Focus visible ────────────────────────────────────── */
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+/* ── Skip link ───────────────────────────────────────── */
+.skip-link {
+  position: absolute;
+  top: -40px;
+  left: 0;
+  background: var(--accent);
+  color: white;
+  padding: 8px 16px;
+  z-index: 9999;
+  border-radius: 0 0 4px 4px;
+  font-weight: 600;
+  text-decoration: none;
+  transition: top 0.2s;
+}
+.skip-link:focus { top: 0; }
+
+/* ── Ad slot ─────────────────────────────────────────── */
+.ad-slot {
+  background: var(--ad-bg);
+  border: 1px dashed var(--ad-border);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-muted);
+  font-size: 11px;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  flex-shrink: 0;
+  overflow: hidden;
+}
+
+/* ── Message bubbles ─────────────────────────────────── */
+.bubble-self {
+  background: var(--bubble-self);
+  color: var(--bubble-self-text);
+  border-radius: 18px 18px 4px 18px;
+}
+.bubble-other {
+  background: var(--bubble-other);
+  color: var(--bubble-other-text);
+  border-radius: 18px 18px 18px 4px;
+}
+
+/* ── Animations ──────────────────────────────────────── */
+@keyframes fade-in {
+  from { opacity: 0; transform: translateY(4px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+@keyframes slide-up {
+  from { opacity: 0; transform: translateY(100%); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+@keyframes pulse-dot {
+  0%, 80%, 100% { transform: scale(0.7); opacity: 0.5; }
+  40% { transform: scale(1); opacity: 1; }
+}
+
+.animate-fade-in { animation: fade-in 0.2s ease-out; }
+.animate-slide-up { animation: slide-up 0.3s cubic-bezier(0.22,1,0.36,1); }
+
+.typing-dot {
+  width: 6px; height: 6px;
+  background: var(--text-muted);
+  border-radius: 50%;
+  display: inline-block;
+  animation: pulse-dot 1.4s infinite ease-in-out;
+}
+.typing-dot:nth-child(2) { animation-delay: 0.2s; }
+.typing-dot:nth-child(3) { animation-delay: 0.4s; }
+
+/* ── Image blurred preview ───────────────────────────── */
+.image-blur { filter: blur(12px); transition: filter 0.3s; }
+.image-blur:hover { filter: blur(8px); }
+
+/* ── Gender ring colors ──────────────────────────────── */
+.ring-male    { --ring-color: #3b82f6; }
+.ring-female  { --ring-color: #ec4899; }
+.ring-other   { --ring-color: #8b5cf6; }
+.ring-prefer_not_to_say { --ring-color: #6b7280; }

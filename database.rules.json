@@ -1,0 +1,37 @@
+{
+  "rules": {
+    "presence": {
+      "$uid": {
+        // Any signed-in user can read presence (needed for online users list)
+        ".read": "auth != null",
+        // Only the owner can write their own presence node
+        ".write": "auth != null && auth.uid === $uid",
+        ".validate": "newData.hasChildren(['online', 'lastSeen'])",
+        "online": {
+          ".validate": "newData.isBoolean()"
+        },
+        "lastSeen": {
+          ".validate": "newData.isNumber()"
+        }
+      }
+    },
+    "typing": {
+      "$dmId": {
+        "$uid": {
+          // Participants only — we can't do a Firestore lookup here so we
+          // allow any authenticated user to read/write typing state.
+          // The dmId is a deterministic sorted uid pair, so guessing
+          // a valid dmId already requires knowing both participant UIDs.
+          ".read": "auth != null",
+          ".write": "auth != null && auth.uid === $uid",
+          ".validate": "newData.isBoolean()"
+        }
+      }
+    },
+    // Deny everything else at root level
+    "$other": {
+      ".read": false,
+      ".write": false
+    }
+  }
+}

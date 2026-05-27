@@ -1,0 +1,31 @@
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+
+    // ── DM images ─────────────────────────────────────────────────────────────
+    // Path: dm-images/{dmId}/{msgId}/{filename}
+    match /dm-images/{dmId}/{msgId}/{filename} {
+
+      // Allow read by any signed-in user who knows the path
+      // (The path contains dmId+msgId which are not guessable without DB access)
+      allow read: if request.auth != null;
+
+      // Allow write only if:
+      //  1. User is signed in
+      //  2. File is an image (MIME type check)
+      //  3. File is ≤ 10 MB
+      allow write: if request.auth != null
+        && request.resource.contentType.matches('image/.*')
+        && request.resource.size <= 2 * 1024 * 1024;
+
+      // Allow delete by any signed-in user — the app deletes images after view
+      // (server-side enforcement of "view once" is in the Firestore rules via mediaViewed)
+      allow delete: if request.auth != null;
+    }
+
+    // Deny everything else
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+  }
+}
