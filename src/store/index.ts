@@ -6,6 +6,8 @@ interface AppState {
   // Auth
   currentUser: UserProfile | null
   setCurrentUser: (user: UserProfile | null) => void
+  authReady: boolean
+  setAuthReady: (ready: boolean) => void
 
   // Theme
   theme: 'light' | 'dark' | 'system'
@@ -18,11 +20,6 @@ interface AppState {
   // Active DM
   activeDmId: string | null
   setActiveDmId: (id: string | null) => void
-
-  // Blocked users (local cache)
-  blockedUsers: string[]
-  addBlockedUser: (uid: string) => void
-  removeBlockedUser: (uid: string) => void
 }
 
 export const useAppStore = create<AppState>()(
@@ -30,6 +27,8 @@ export const useAppStore = create<AppState>()(
     (set) => ({
       currentUser: null,
       setCurrentUser: (user) => set({ currentUser: user }),
+      authReady: false,
+      setAuthReady: (ready) => set({ authReady: ready }),
 
       theme: 'system',
       setTheme: (theme) => set({ theme }),
@@ -39,16 +38,10 @@ export const useAppStore = create<AppState>()(
 
       activeDmId: null,
       setActiveDmId: (id) => set({ activeDmId: id }),
-
-      blockedUsers: [],
-      addBlockedUser: (uid) =>
-        set((s) => ({ blockedUsers: [...new Set([...s.blockedUsers, uid])] })),
-      removeBlockedUser: (uid) =>
-        set((s) => ({ blockedUsers: s.blockedUsers.filter((u) => u !== uid) })),
     }),
     {
       name: 'chatapp-store',
-      partialize: (s) => ({ theme: s.theme, blockedUsers: s.blockedUsers }),
+      partialize: (s) => ({ theme: s.theme }),
     }
   )
 )

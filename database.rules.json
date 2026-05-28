@@ -1,9 +1,9 @@
 {
   "rules": {
     "presence": {
+      // Any signed-in user can read the full presence node (needed by listenToAllPresence)
+      ".read": "auth != null",
       "$uid": {
-        // Any signed-in user can read presence (needed for online users list)
-        ".read": "auth != null",
         // Only the owner can write their own presence node
         ".write": "auth != null && auth.uid === $uid",
         ".validate": "newData.hasChildren(['online', 'lastSeen'])",

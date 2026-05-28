@@ -9,19 +9,17 @@ import { ThemeToggle } from '@/components/layout/ThemeToggle'
 import Link from 'next/link'
 
 export default function HomePage() {
-  const { currentUser } = useAppStore()
+  const { currentUser, authReady } = useAppStore()
   const router = useRouter()
 
   useEffect(() => {
-    const timer = setTimeout(() => {
-      if (currentUser === null) {
-        router.push('/onboarding')
-      }
-    }, 1500)
-    return () => clearTimeout(timer)
-  }, [currentUser, router])
+    if (!authReady) return
+    if (currentUser === null) {
+      router.push('/onboarding')
+    }
+  }, [authReady, currentUser, router])
 
-  if (!currentUser) {
+  if (!authReady || !currentUser) {
     return (
       <div className="h-dvh flex items-center justify-center bg-[var(--bg-primary)]">
         <div className="flex flex-col items-center gap-3">

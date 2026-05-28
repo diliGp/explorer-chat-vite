@@ -20,8 +20,12 @@ import {
   getDoc,
   deleteDoc,
   updateDoc,
+  arrayUnion,
+  arrayRemove,
 } from 'firebase/firestore'
 import { auth, db } from './client'
+import { ref, remove } from 'firebase/database'
+import { rtdb } from './client'
 
 export async function signInAnonymous(): Promise<User> {
   const result = await signInAnonymously(auth)
@@ -230,12 +234,123 @@ async function mergeAnonymousData(
   }
 }
 
+/**
+ * Block a user: add blockerUid to their profile's blockedBy-style tracking,
+ * add targetUid to the blocker's own blockedUsers list, and stamp blockedBy on the DM.
+ */
+export async function blockUser(
+  blockerUid: string,
+  targetUid: string,
+  dmId: string | null
+): Promise<void> {
+  const blockerRef = doc(db, 'users', blockerUid)
+  // Add targetUid to this user's blockedUsers list in Firestore
+  await updateDoc(blockerRef, { blockedUsers: arrayUnion(targetUid) })
+
+  // Stamp the DM doc so Firestore rules can enforce it without extra reads
+  if (dmId) {
+    const dmRef = doc(db, 'dms', dmId)
+    await updateDoc(dmRef, { blockedBy: arrayUnion(blockerUid) })
+  }
+}
+
+/**
+ * Unblock a user: remove targetUid from blocker's blockedUsers and clear DM blockedBy entry.
+ */
+export async function unblockUser(
+  blockerUid: string,
+  targetUid: string,
+  dmId: string | null
+): Promise<void> {
+  const blockerRef = doc(db, 'users', blockerUid)
+  await updateDoc(blockerRef, { blockedUsers: arrayRemove(targetUid) })
+
+  if (dmId) {
+    const dmRef = doc(db, 'dms', dmId)
+    await updateDoc(dmRef, { blockedBy: arrayRemove(blockerUid) })
+  }
+}
+
+/**
+ * Full cleanup for anonymous users on sign-out or tab close.
+ * Order matters: Storage → messages → DM docs → user profile → auth user delete.
+ */
+export async function deleteAnonUser(uid: string): Promise<void> {
+  try {
+    // 1. Find all DMs this user participates in
+    const dmsSnap = await getDocs(
+      query(collection(db, 'dms'), where('participants', 'array-contains', uid))
+    )
+
+    for (const dmDoc of dmsSnap.docs) {
+      const msgsSnap = await getDocs(collection(db, 'dms', dmDoc.id, 'messages'))
+
+      // 2. Best-effort: delete Storage images
+      const { deleteImage } = await import('./storage')
+      for (const m of msgsSnap.docs) {
+        const data = m.data() as any
+        if (data.mediaRef) {
+          await deleteImage(data.mediaRef).catch(() => {})
+        }
+      }
+
+      // 3. Delete messages in batches of 500
+      for (let i = 0; i < msgsSnap.docs.length; i += 500) {
+        const batch = writeBatch(db)
+        for (const m of msgsSnap.docs.slice(i, i + 500)) {
+          batch.delete(m.ref)
+        }
+        await batch.commit()
+      }
+
+      // 4. Delete the DM doc itself
+      await deleteDoc(dmDoc.ref).catch(() => {})
+    }
+
+    // 5. Delete RTDB presence node
+    try {
+      await remove(ref(rtdb, `presence/${uid}`))
+    } catch {
+      // Best-effort
+    }
+
+    // 6. Delete avatar from Storage if present
+    try {
+      const profileSnap = await getDoc(doc(db, 'users', uid))
+      if (profileSnap.exists()) {
+        const avatarPath = profileSnap.data().avatarPath
+        if (avatarPath) {
+          const { deleteAvatar } = await import('./storage')
+          await deleteAvatar(avatarPath).catch(() => {})
+        }
+      }
+    } catch {
+      // Best-effort
+    }
+
+    // 7. Delete Firestore user profile
+    await deleteDoc(doc(db, 'users', uid)).catch(() => {})
+
+    // 9. Delete the Firebase Auth user — MUST be last
+    const user = auth.currentUser
+    if (user && user.uid === uid) {
+      await user.delete()
+    }
+  } catch (e) {
+    console.error('[deleteAnonUser] cleanup failed:', e)
+  }
+}
+
 export function onAuthChange(callback: (user: User | null) => void) {
   return onAuthStateChanged(auth, callback)
 }
 
-export async function logout() {
-  await signOut(auth)
+export async function logout(isAnon = false, uid?: string) {
+  if (isAnon && uid) {
+    await deleteAnonUser(uid)
+  } else {
+    await signOut(auth)
+  }
 }
 
 export function currentUser() {

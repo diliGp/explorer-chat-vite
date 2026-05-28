@@ -14,6 +14,8 @@ interface MessageListProps {
   onReport: (msgId: string) => void
   onViewImage: (message: Message) => Promise<string | null>
   loading: boolean
+  /** Timestamp the OTHER participant last read (for blue tick read receipts) */
+  otherReadAt?: number
 }
 
 function DateDivider({ date }: { date: Date }) {
@@ -39,6 +41,7 @@ export function MessageList({
   onReport,
   onViewImage,
   loading,
+  otherReadAt,
 }: MessageListProps) {
   const bottomRef = useRef<HTMLDivElement>(null)
   const containerRef = useRef<HTMLDivElement>(null)
@@ -106,6 +109,7 @@ export function MessageList({
               onReply={onReply}
               onReport={onReport}
               onViewImage={onViewImage}
+              otherReadAt={otherReadAt}
             />
           ))}
         </div>

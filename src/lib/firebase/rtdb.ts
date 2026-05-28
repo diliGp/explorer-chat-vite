@@ -3,8 +3,8 @@ import {
   set,
   onValue,
   onDisconnect,
-  serverTimestamp,
   get,
+  serverTimestamp,
 } from 'firebase/database'
 import { rtdb } from './client'
 
@@ -13,15 +13,42 @@ export const presenceRef = (uid: string) => ref(rtdb, `presence/${uid}`)
 export const typingRef = (uid: string, dmId: string) =>
   ref(rtdb, `presence/${uid}/typing/${dmId}`)
 
+// Tracks the active presence unsubscribe so we don't stack listeners
+let presenceUnsub: (() => void) | null = null
+
+export function setupPresence(uid: string): () => void {
+  // Cancel any previous presence listener (but do NOT set offline here —
+  // let onDisconnect handle real disconnects to avoid navigation flicker)
+  if (presenceUnsub) presenceUnsub()
+
+  const pRef = presenceRef(uid)
+  const connectedRef = ref(rtdb, '.info/connected')
+
+  const unsub = onValue(connectedRef, (snap) => {
+    if (snap.val() === true) {
+      // Re-register onDisconnect and set online every time we reconnect
+      onDisconnect(pRef).set({ online: false, lastSeen: Date.now() }).catch(() => {})
+      set(pRef, { online: true, lastSeen: Date.now() }).catch(() => {})
+    }
+  })
+
+  presenceUnsub = unsub
+  return () => {
+    unsub()
+    presenceUnsub = null
+    // Only set offline on intentional cleanup (tab close / sign-out)
+    set(pRef, { online: false, lastSeen: Date.now() })
+  }
+}
+
 export async function setOnline(uid: string) {
   const pRef = presenceRef(uid)
-  await set(pRef, { online: true, lastSeen: serverTimestamp() })
-  // Auto-set offline on disconnect
-  onDisconnect(pRef).set({ online: false, lastSeen: serverTimestamp() })
+  await set(pRef, { online: true, lastSeen: Date.now() })
+  onDisconnect(pRef).set({ online: false, lastSeen: Date.now() })
 }
 
 export async function setOffline(uid: string) {
-  await set(presenceRef(uid), { online: false, lastSeen: serverTimestamp() })
+  await set(presenceRef(uid), { online: false, lastSeen: Date.now() })
 }
 
 export async function setTyping(uid: string, dmId: string, isTyping: boolean) {

@@ -4,7 +4,6 @@ import { useState, useRef, useCallback } from 'react'
 import { useTyping } from '@/lib/hooks/useTyping'
 import type { ReplyTo } from '@/types'
 import { ReplyPreview } from './ReplyPreview'
-import { GifPicker } from './GifPicker'
 import { EmojiPickerWrapper } from './EmojiPickerWrapper'
 
 interface MessageInputProps {
@@ -24,6 +23,14 @@ interface MessageInputProps {
 const MAX_FILE_SIZE = 2 * 1024 * 1024 // 2MB
 const ALLOWED_TYPES = ['image/jpeg', 'image/png', 'image/gif', 'image/webp']
 
+// Matches common GIF URLs (Giphy, Tenor, direct .gif links)
+const GIF_URL_RE = /^https?:\/\/\S+\.gif(\?.*)?$/i
+
+function isGifUrl(text: string): boolean {
+  const trimmed = text.trim()
+  return GIF_URL_RE.test(trimmed)
+}
+
 export function MessageInput({
   dmId,
   currentUid,
@@ -38,7 +45,6 @@ export function MessageInput({
 }: MessageInputProps) {
   const [text, setText] = useState('')
   const [sending, setSending] = useState(false)
-  const [showGif, setShowGif] = useState(false)
   const [showEmoji, setShowEmoji] = useState(false)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const fileRef = useRef<HTMLInputElement>(null)
@@ -57,6 +63,28 @@ export function MessageInput({
     adjustHeight()
   }
 
+  const handlePaste = useCallback(async (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
+    if (isRateLimited || sending) return
+    const items = Array.from(e.clipboardData.items)
+    const imageItem = items.find((item) => item.type.startsWith('image/'))
+    if (!imageItem) return
+    e.preventDefault() // don't paste as text
+    const file = imageItem.getAsFile()
+    if (!file) return
+    if (file.size > MAX_FILE_SIZE) {
+      alert('Image must be under 2MB.')
+      return
+    }
+    setSending(true)
+    try {
+      await onSendImage(file, replyTo ?? undefined)
+      onCancelReply()
+    } finally {
+      setSending(false)
+      textareaRef.current?.focus()
+    }
+  }, [isRateLimited, sending, replyTo, onSendImage, onCancelReply])
+
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault()
@@ -69,7 +97,13 @@ export function MessageInput({
     setSending(true)
     stopTyping()
     try {
-      await onSendText(text.trim(), replyTo ?? undefined)
+      const trimmed = text.trim()
+      // Auto-detect GIF URLs pasted in
+      if (isGifUrl(trimmed)) {
+        await onSendGif(trimmed, replyTo ?? undefined)
+      } else {
+        await onSendText(trimmed, replyTo ?? undefined)
+      }
       setText('')
       onCancelReply()
       if (textareaRef.current) textareaRef.current.style.height = 'auto'
@@ -77,13 +111,7 @@ export function MessageInput({
       setSending(false)
       textareaRef.current?.focus()
     }
-  }, [text, sending, isRateLimited, replyTo, onSendText, onCancelReply, stopTyping])
-
-  const handleGifSelect = async (url: string) => {
-    if (isRateLimited) return
-    await onSendGif(url, replyTo ?? undefined)
-    onCancelReply()
-  }
+  }, [text, sending, isRateLimited, replyTo, onSendText, onSendGif, onCancelReply, stopTyping])
 
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
@@ -146,7 +174,7 @@ export function MessageInput({
       <div className={`flex items-end gap-2 px-3 py-3 ${isRateLimited ? 'opacity-40 pointer-events-none select-none' : ''}`}>
         {/* Emoji button */}
         <button
-          onClick={() => { setShowEmoji(!showEmoji); setShowGif(false) }}
+          onClick={() => setShowEmoji(!showEmoji)}
           aria-label="Open emoji picker"
           aria-expanded={showEmoji}
           disabled={isRateLimited}
@@ -156,17 +184,6 @@ export function MessageInput({
             <circle cx="12" cy="12" r="10"/>
             <path d="M8 13s1.5 2 4 2 4-2 4-2M9 9h.01M15 9h.01"/>
           </svg>
-        </button>
-
-        {/* GIF button */}
-        <button
-          onClick={() => { setShowGif(!showGif); setShowEmoji(false) }}
-          aria-label="Open GIF picker"
-          aria-expanded={showGif}
-          disabled={isRateLimited}
-          className="w-9 h-9 flex-shrink-0 flex items-center justify-center rounded-xl hover:bg-[var(--bg-surface)] transition-colors text-[var(--text-muted)] hover:text-[var(--text-primary)] font-bold text-xs"
-        >
-          GIF
         </button>
 
         {/* Image upload */}
@@ -198,7 +215,8 @@ export function MessageInput({
             value={text}
             onChange={handleChange}
             onKeyDown={handleKeyDown}
-            placeholder={isRateLimited ? 'Waiting for a reply...' : 'Type a message...'}
+            onPaste={handlePaste}
+            placeholder={isRateLimited ? 'Waiting for a reply...' : 'Type a message or paste a GIF URL...'}
             rows={1}
             disabled={isRateLimited}
             className="w-full bg-[var(--bg-surface)] rounded-2xl px-4 py-2.5 text-sm text-[var(--text-primary)] placeholder:text-[var(--text-muted)] outline-none focus:ring-2 focus:ring-[var(--accent)] resize-none transition-all disabled:cursor-not-allowed"
@@ -226,13 +244,6 @@ export function MessageInput({
         </button>
       </div>
 
-      {/* Pickers (hidden when rate-limited) */}
-      {showGif && !isRateLimited && (
-        <GifPicker
-          onSelect={handleGifSelect}
-          onClose={() => setShowGif(false)}
-        />
-      )}
       {showEmoji && !isRateLimited && (
         <EmojiPickerWrapper
           onSelect={insertEmoji}

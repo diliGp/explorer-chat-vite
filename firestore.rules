@@ -11,17 +11,13 @@ service cloud.firestore {
       return isSignedIn() && request.auth.uid == uid;
     }
 
-    function senderIsPermanent() {
-      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data.isPermanent == true;
-    }
-
     // ── Users ─────────────────────────────────────────────────────────────────
     match /users/{uid} {
       allow read: if isSignedIn();
       allow create: if isOwner(uid)
         && request.resource.data.keys().hasAll(['uid', 'name', 'age', 'gender', 'country', 'isPermanent', 'isOnline', 'createdAt'])
         && request.resource.data.uid == uid
-        && request.resource.data.age is int
+        && request.resource.data.age is number
         && request.resource.data.age >= 13
         && request.resource.data.name is string
         && request.resource.data.name.size() >= 1
@@ -29,6 +25,8 @@ service cloud.firestore {
       allow update: if isOwner(uid)
         && request.resource.data.uid == resource.data.uid
         && request.resource.data.createdAt == resource.data.createdAt;
+      // Allow users to delete their own profile (anon cleanup)
+      allow delete: if isOwner(uid);
     }
 
     // ── DMs ───────────────────────────────────────────────────────────────────
@@ -48,10 +46,15 @@ service cloud.firestore {
         && request.resource.data.keys().hasAll(['participants', 'participantNames', 'createdAt', 'lastMessageAt'])
         && dmId == [request.resource.data.participants[0], request.resource.data.participants[1]].join('_');
 
-      // Participants can update DM metadata (lastMessageAt, lastMessagePreview,
-      // lastSenderId, consecutiveSenderCount, unreadCount) but not participants list
-      allow update: if isParticipant()
-        && request.resource.data.participants == resource.data.participants;
+      allow update: if isParticipant() && (
+          (request.resource.data.participants == resource.data.participants)
+          || request.resource.data.diff(resource.data).affectedKeys().hasOnly(['lastReadAt'])
+          || request.resource.data.diff(resource.data).affectedKeys().hasOnly(['bothReplied'])
+          || request.resource.data.diff(resource.data).affectedKeys().hasOnly(['blockedBy'])
+        );
+
+      // Allow participants to delete the DM (anon user cleanup)
+      allow delete: if isParticipant();
 
       // ── Messages sub-collection ─────────────────────────────────────────────
       match /messages/{msgId} {
@@ -60,24 +63,21 @@ service cloud.firestore {
             && request.auth.uid in get(/databases/$(database)/documents/dms/$(dmId)).data.participants;
         }
 
-        function canSend() {
-          let dm = get(/databases/$(database)/documents/dms/$(dmId)).data;
-          let lastSender = dm.get('lastSenderId', '');
-          let count = dm.get('consecutiveSenderCount', 0);
-          // Permanent users are never rate-limited
-          return senderIsPermanent()
-            || lastSender != request.auth.uid
-            || count < 2;
+        function isNotBlocked() {
+          // Block message create if the sender is in the DM's blockedBy list
+          // (i.e., the other party has blocked them, or they've blocked the other party)
+          let dmData = get(/databases/$(database)/documents/dms/$(dmId)).data;
+          return !(request.auth.uid in (dmData.get('blockedBy', [])));
         }
 
         allow read: if isDmParticipant();
 
         allow create: if isDmParticipant()
+          && isNotBlocked()
           && request.resource.data.senderId == request.auth.uid
           && request.resource.data.dmId == dmId
           && request.resource.data.keys().hasAll(['senderId', 'senderName', 'type', 'createdAt', 'dmId'])
-          && request.resource.data.type in ['text', 'image', 'gif']
-          && canSend();
+          && request.resource.data.type in ['text', 'image', 'gif'];
 
         allow update: if isDmParticipant()
           && (

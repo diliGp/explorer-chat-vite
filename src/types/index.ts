@@ -9,6 +9,8 @@ export interface UserProfile {
   city?: string
   email?: string
   avatarUrl?: string
+  avatarPath?: string
+  bio?: string
   isPermanent: boolean
   isOnline: boolean
   lastSeen: number
@@ -64,6 +66,12 @@ export interface DM {
   lastSenderId?: string
   /** How many consecutive messages the lastSenderId has sent without a reply */
   consecutiveSenderCount?: number
+  /** Map of uid → timestamp of last message they read */
+  lastReadAt?: Record<string, number>
+  /** True once both participants have sent at least one message — disables rate limiting forever */
+  bothReplied?: boolean
+  /** UIDs who have blocked the other party in this DM — used by Firestore rules */
+  blockedBy?: string[]
 }
 
 export interface OnlineUser {
@@ -72,6 +80,8 @@ export interface OnlineUser {
   gender: Gender
   country: string
   city?: string
+  avatarUrl?: string
+  bio?: string
   isOnline: boolean
   lastSeen: number
 }

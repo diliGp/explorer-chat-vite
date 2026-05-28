@@ -1,12 +1,21 @@
 'use client'
 
+import { useState, useEffect } from 'react'
 import { useTheme } from '@/lib/hooks/useTheme'
 
 export function ThemeToggle() {
   const { theme, toggle } = useTheme()
-  const isDark = typeof document !== 'undefined'
-    ? document.documentElement.classList.contains('dark')
-    : false
+  const [mounted, setMounted] = useState(false)
+  const [isDark, setIsDark] = useState(false)
+
+  useEffect(() => {
+    setMounted(true)
+    setIsDark(document.documentElement.classList.contains('dark'))
+  }, [theme])
+
+  if (!mounted) {
+    return <button className="w-9 h-9 rounded-xl" aria-hidden="true" />
+  }
 
   return (
     <button

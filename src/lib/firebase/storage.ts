@@ -6,12 +6,42 @@ import {
 } from 'firebase/storage'
 import { storage } from './client'
 
+export const MAX_AVATAR_BYTES = 2 * 1024 * 1024 // 2 MB
+
+/**
+ * Upload a profile avatar.
+ * Uses a fixed path (no extension) so re-uploads always overwrite the same object.
+ */
+export async function uploadAvatar(
+  uid: string,
+  file: File
+): Promise<{ url: string; path: string }> {
+  if (file.size > MAX_AVATAR_BYTES) throw new Error('Image must be 2 MB or smaller.')
+  if (!file.type.startsWith('image/')) throw new Error('Please choose an image file.')
+  const path = `avatars/${uid}/avatar`
+  const storageRef = ref(storage, path)
+  await uploadBytes(storageRef, file, { contentType: file.type })
+  const url = await getDownloadURL(storageRef)
+  return { url, path }
+}
+
+/**
+ * Delete a stored avatar by its path.
+ */
+export async function deleteAvatar(path: string): Promise<void> {
+  try {
+    await deleteObject(ref(storage, path))
+  } catch {
+    // Best-effort — object may not exist
+  }
+}
+
 export async function uploadImage(
   dmId: string,
   msgId: string,
   file: File
 ): Promise<{ path: string; downloadUrl: string; thumbnail: string }> {
-  const path = `images/${dmId}/${msgId}`
+  const path = `dm-images/${dmId}/${msgId}/img`
   const storageRef = ref(storage, path)
 
   await uploadBytes(storageRef, file, {

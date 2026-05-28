@@ -7,11 +7,9 @@ import {
   updateDoc,
   runTransaction,
   doc,
-  collection,
   arrayUnion,
   getDocs,
   writeBatch,
-  serverTimestamp,
 } from 'firebase/firestore'
 import { db } from '@/lib/firebase/client'
 import { recentMessages, messagesCol, messageDoc, dmDoc } from '@/lib/firebase/firestore'
@@ -53,8 +51,31 @@ export function useMessages(
   }, [dmId])
 
   /**
-   * Atomically checks the consecutive-send limit for anonymous users,
-   * writes the message, and updates DM metadata in a single transaction.
+   * Fast path for permanent users: fire-and-forget two independent writes.
+   * No round-trip read needed — skips transaction overhead entirely.
+   */
+  const sendDirect = useCallback(
+    async (messageData: Omit<Message, 'id'>, preview: string): Promise<void> => {
+      const dmRef = dmDoc(dmId)
+      const msgsColRef = messagesCol(dmId)
+      const newMsgRef = doc(msgsColRef)
+      // Both writes in parallel — message appears instantly via onSnapshot
+      await Promise.all([
+        updateDoc(dmRef, {
+          lastMessageAt: messageData.createdAt,
+          lastMessagePreview: preview,
+          lastSenderId: currentUid,
+          consecutiveSenderCount: 1,
+          bothReplied: true, // permanent users always unlock the DM
+        }),
+        addDoc(msgsColRef, messageData),
+      ])
+    },
+    [dmId, currentUid]
+  )
+
+  /**
+   * Transaction path for anonymous users: read → check consecutive limit → write.
    */
   const sendWithTransaction = useCallback(
     async (
@@ -69,36 +90,40 @@ export function useMessages(
         if (!dmSnap.exists()) throw new Error('DM not found')
 
         const dm = dmSnap.data() as any
+        const lastSenderId: string = dm.lastSenderId ?? ''
+        const consecutiveCount: number = dm.consecutiveSenderCount ?? 0
+        const bothReplied: boolean = dm.bothReplied ?? false
 
-        // ── Consecutive-send check (anonymous senders only) ─────────────────
-        if (!isPermanent) {
-          const lastSenderId: string = dm.lastSenderId ?? ''
-          const consecutiveCount: number = dm.consecutiveSenderCount ?? 0
-          if (
-            lastSenderId === currentUid &&
-            consecutiveCount >= ANON_CONSECUTIVE_LIMIT
-          ) {
-            throw new RateLimitError()
-          }
+        // Only enforce limit if chat hasn't become two-way yet
+        if (!bothReplied && lastSenderId === currentUid && consecutiveCount >= ANON_CONSECUTIVE_LIMIT) {
+          throw new RateLimitError()
         }
 
-        // ── Write message ────────────────────────────────────────────────────
         const newMsgRef = doc(msgsColRef)
         tx.set(newMsgRef, messageData)
 
-        // ── Update DM metadata ───────────────────────────────────────────────
-        const isSameAsBefore = (dm.lastSenderId ?? '') === currentUid
+        const isSameAsBefore = lastSenderId === currentUid
+        // Mark bothReplied the moment a different sender responds
+        const nowBothReplied = bothReplied || (!isSameAsBefore && lastSenderId !== '')
+
         tx.update(dmRef, {
           lastMessageAt: messageData.createdAt,
           lastMessagePreview: preview,
           lastSenderId: currentUid,
-          consecutiveSenderCount: isSameAsBefore
-            ? (dm.consecutiveSenderCount ?? 0) + 1
-            : 1,
+          consecutiveSenderCount: isSameAsBefore ? consecutiveCount + 1 : 1,
+          ...(nowBothReplied && !bothReplied ? { bothReplied: true } : {}),
         })
       })
     },
-    [dmId, currentUid, isPermanent]
+    [dmId, currentUid]
+  )
+
+  const send = useCallback(
+    (messageData: Omit<Message, 'id'>, preview: string) =>
+      isPermanent
+        ? sendDirect(messageData, preview)
+        : sendWithTransaction(messageData, preview),
+    [isPermanent, sendDirect, sendWithTransaction]
   )
 
   const sendText = useCallback(
@@ -115,7 +140,7 @@ export function useMessages(
         createdAt: Date.now(),
         reportedBy: [],
       }
-      await sendWithTransaction(messageData, text.trim().slice(0, 60))
+      await send(messageData, text.trim().slice(0, 60))
     },
     [dmId, currentUid, currentName, sendWithTransaction]
   )
@@ -133,72 +158,65 @@ export function useMessages(
         createdAt: Date.now(),
         reportedBy: [],
       }
-      await sendWithTransaction(messageData, '🎬 GIF')
+      await send(messageData, '🎬 GIF')
     },
-    [dmId, currentUid, currentName, sendWithTransaction]
+    [dmId, currentUid, currentName, send]
   )
 
   const sendImage = useCallback(
     async (file: File, replyTo?: ReplyTo) => {
-      // We need the doc ID before the transaction for the storage path,
-      // so we create the message ref outside, then use the transaction only
-      // for the limit check + DM metadata update.
       const msgsColRef = messagesCol(dmId)
       const dmRef = dmDoc(dmId)
-
-      // Pre-allocate a doc reference so we know the msgId for storage upload
       const newMsgRef = doc(msgsColRef)
+      const now = Date.now()
 
-      // Check limit in a transaction, write placeholder, update DM
-      await runTransaction(db, async (tx) => {
-        const dmSnap = await tx.get(dmRef)
-        if (!dmSnap.exists()) throw new Error('DM not found')
+      const messageData: Omit<Message, 'id'> = {
+        dmId,
+        senderId: currentUid,
+        senderName: currentName,
+        type: 'image' as MessageType,
+        mediaViewed: false,
+        mediaThumbnail: '',
+        mediaRef: '',
+        ...(replyTo ? { replyTo } : {}),
+        createdAt: now,
+        reportedBy: [],
+      }
 
-        const dm = dmSnap.data() as any
-
-        if (!isPermanent) {
+      if (isPermanent) {
+        // Fast path: no transaction needed
+        await Promise.all([
+          updateDoc(dmRef, {
+            lastMessageAt: now,
+            lastMessagePreview: '📷 Image',
+            lastSenderId: currentUid,
+            consecutiveSenderCount: 1,
+          }),
+          import('firebase/firestore').then(({ setDoc }) => setDoc(newMsgRef, messageData)),
+        ])
+      } else {
+        await runTransaction(db, async (tx) => {
+          const dmSnap = await tx.get(dmRef)
+          if (!dmSnap.exists()) throw new Error('DM not found')
+          const dm = dmSnap.data() as any
           const lastSenderId: string = dm.lastSenderId ?? ''
           const consecutiveCount: number = dm.consecutiveSenderCount ?? 0
-          if (
-            lastSenderId === currentUid &&
-            consecutiveCount >= ANON_CONSECUTIVE_LIMIT
-          ) {
+          if (lastSenderId === currentUid && consecutiveCount >= ANON_CONSECUTIVE_LIMIT) {
             throw new RateLimitError()
           }
-        }
-
-        const messageData: Omit<Message, 'id'> = {
-          dmId,
-          senderId: currentUid,
-          senderName: currentName,
-          type: 'image' as MessageType,
-          mediaViewed: false,
-          mediaThumbnail: '',
-          mediaRef: '',
-          ...(replyTo ? { replyTo } : {}),
-          createdAt: Date.now(),
-          reportedBy: [],
-        }
-
-        tx.set(newMsgRef, messageData)
-
-        const isSameAsBefore = (dm.lastSenderId ?? '') === currentUid
-        tx.update(dmRef, {
-          lastMessageAt: messageData.createdAt,
-          lastMessagePreview: '📷 Image',
-          lastSenderId: currentUid,
-          consecutiveSenderCount: isSameAsBefore
-            ? (dm.consecutiveSenderCount ?? 0) + 1
-            : 1,
+          tx.set(newMsgRef, messageData)
+          tx.update(dmRef, {
+            lastMessageAt: now,
+            lastMessagePreview: '📷 Image',
+            lastSenderId: currentUid,
+            consecutiveSenderCount: lastSenderId === currentUid ? consecutiveCount + 1 : 1,
+          })
         })
-      })
+      }
 
-      // Upload and patch the message after the transaction commits
+      // Upload and patch after write
       const { path, thumbnail } = await uploadImage(dmId, newMsgRef.id, file)
-      await updateDoc(newMsgRef, {
-        mediaRef: path,
-        mediaThumbnail: thumbnail,
-      })
+      await updateDoc(newMsgRef, { mediaRef: path, mediaThumbnail: thumbnail })
     },
     [dmId, currentUid, currentName, isPermanent]
   )

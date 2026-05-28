@@ -10,12 +10,13 @@ import { MessageList } from '@/components/chat/MessageList'
 import { MessageInput } from '@/components/chat/MessageInput'
 import { ClearChatMenu } from '@/components/chat/ClearChatMenu'
 import { UserAvatar } from '@/components/users/UserAvatar'
+import { ProfileSheet } from '@/components/users/ProfileSheet'
 import { AdSlot } from '@/components/layout/AdSlot'
 import { Sidebar } from '@/components/layout/Sidebar'
 import { ThemeToggle } from '@/components/layout/ThemeToggle'
-import { dmDoc } from '@/lib/firebase/firestore'
-import { onSnapshot } from 'firebase/firestore'
-import type { DM, ReplyTo } from '@/types'
+import { dmDoc, userDoc } from '@/lib/firebase/firestore'
+import { onSnapshot, updateDoc, getDoc } from 'firebase/firestore'
+import type { DM, OnlineUser, ReplyTo } from '@/types'
 import Link from 'next/link'
 import toast from 'react-hot-toast'
 
@@ -27,6 +28,9 @@ export default function DmPage() {
   const [dm, setDm] = useState<DM | null>(null)
   const [replyTo, setReplyTo] = useState<ReplyTo | null>(null)
   const [isDark, setIsDark] = useState(false)
+  const [showProfile, setShowProfile] = useState(false)
+  const [otherAvatarUrl, setOtherAvatarUrl] = useState<string | undefined>()
+  const [otherBio, setOtherBio] = useState<string | undefined>()
 
   useEffect(() => {
     setIsDark(document.documentElement.classList.contains('dark'))
@@ -54,10 +58,12 @@ export default function DmPage() {
     dmId, uid, name, isPermanent
   )
 
-  // Derive whether this anonymous user is rate-limited (sent ≥2 unanswered messages)
+  // Rate-limit: anon users can send at most 2 opening messages until other party replies.
+  // Once dm.bothReplied is true (set server-side on first cross-party message), no limit ever again.
   const isRateLimited =
     !isPermanent &&
     dm != null &&
+    !dm.bothReplied &&
     (dm.consecutiveSenderCount ?? 0) >= 2 &&
     dm.lastSenderId === uid
 
@@ -67,6 +73,29 @@ export default function DmPage() {
   // Determine the other user's info
   const otherUid = participants.find((p) => p !== uid) ?? ''
   const otherName = dm?.participantNames?.[otherUid] ?? 'User'
+
+  // Fetch other user's profile extras (avatarUrl, bio) once when otherUid is known
+  useEffect(() => {
+    if (!otherUid) return
+    getDoc(userDoc(otherUid)).then((snap) => {
+      if (snap.exists()) {
+        const data = snap.data()
+        setOtherAvatarUrl(data.avatarUrl)
+        setOtherBio(data.bio)
+      }
+    }).catch(() => {})
+  }, [otherUid])
+
+  // Mark DM as read: write lastReadAt whenever this page is open and messages arrive
+  useEffect(() => {
+    if (!dmId || !uid || !dm) return
+    const lastReadAt = dm.lastReadAt?.[uid] ?? 0
+    if (dm.lastMessageAt > lastReadAt) {
+      updateDoc(dmDoc(dmId), {
+        [`lastReadAt.${uid}`]: Date.now(),
+      }).catch(() => {})
+    }
+  }, [dm?.lastMessageAt, dmId, uid]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleClearChat = async () => {
     await clearChat()
@@ -115,6 +144,24 @@ export default function DmPage() {
     }
   }
 
+  // Build OnlineUser shape for ProfileSheet from DM data
+  const otherUserForProfile: OnlineUser | null = dm && otherUid ? {
+    uid: otherUid,
+    name: otherName,
+    gender: dm.participantGenders?.[otherUid] ?? 'other',
+    country: dm.participantCountries?.[otherUid] ?? 'US',
+    avatarUrl: otherAvatarUrl,
+    bio: otherBio,
+    isOnline: false,
+    lastSeen: 0,
+  } : null
+
+  // Block state: current user blocked other, or other blocked current user
+  const blockedUsers: string[] = currentUser?.blockedUsers ?? []
+  const iBlockedThem = blockedUsers.includes(otherUid)
+  const theyBlockedMe = (dm?.blockedBy ?? []).includes(otherUid)
+  const isBlocked = iBlockedThem || theyBlockedMe
+
   if (!currentUser) {
     return null
   }
@@ -150,21 +197,27 @@ export default function DmPage() {
                 </svg>
               </Link>
 
-              <UserAvatar
-                name={otherName}
-                gender={dm?.participantGenders?.[otherUid] ?? 'other'}
-                country={dm?.participantCountries?.[otherUid] ?? 'US'}
-                isOnline
-                size="md"
-                showFlag={false}
-              />
-
-              <div className="flex-1 min-w-0">
-                <h1 className="text-sm font-semibold text-[var(--text-primary)] truncate">{otherName}</h1>
-                <p className="text-xs text-[var(--text-muted)]">
-                  {typingUids.length > 0 ? 'typing...' : 'Online'}
-                </p>
-              </div>
+              <button
+                onClick={() => setShowProfile(true)}
+                className="flex items-center gap-3 flex-1 min-w-0 text-left hover:opacity-80 transition-opacity"
+                aria-label={`View ${otherName}'s profile`}
+              >
+                <UserAvatar
+                  name={otherName}
+                  gender={dm?.participantGenders?.[otherUid] ?? 'other'}
+                  country={dm?.participantCountries?.[otherUid] ?? 'US'}
+                  isOnline
+                  size="md"
+                  showFlag={false}
+                  avatarUrl={otherAvatarUrl}
+                />
+                <div className="flex-1 min-w-0">
+                  <h1 className="text-sm font-semibold text-[var(--text-primary)] truncate">{otherName}</h1>
+                  <p className="text-xs text-[var(--text-muted)]">
+                    {typingUids.length > 0 ? 'typing...' : 'Online'}
+                  </p>
+                </div>
+              </button>
 
               <ThemeToggle />
               <ClearChatMenu onClearChat={handleClearChat} />
@@ -179,21 +232,40 @@ export default function DmPage() {
               onReport={handleReport}
               onViewImage={viewImage}
               loading={loading}
+              otherReadAt={dm?.lastReadAt?.[otherUid] ?? 0}
             />
 
-            {/* Input */}
-            <MessageInput
-              dmId={dmId}
-              currentUid={uid}
-              participants={participants}
-              replyTo={replyTo}
-              onCancelReply={() => setReplyTo(null)}
-              onSendText={handleSendText}
-              onSendGif={handleSendGif}
-              onSendImage={handleSendImage}
-              isDark={isDark}
-              isRateLimited={isRateLimited}
-            />
+            {/* Input / blocked banner */}
+            {isBlocked ? (
+              <div className="flex-shrink-0 px-4 py-3 border-t border-[var(--border)] bg-[var(--bg-surface)]">
+                <p className="text-sm text-center text-[var(--text-muted)]">
+                  {iBlockedThem
+                    ? 'You blocked this user. Unblock to send messages.'
+                    : 'You cannot send messages to this user.'}
+                </p>
+                {iBlockedThem && (
+                  <button
+                    onClick={() => setShowProfile(true)}
+                    className="mt-2 w-full py-2 rounded-xl text-sm font-medium text-[var(--accent)] hover:bg-[var(--bg-elevated)] transition-colors"
+                  >
+                    Unblock
+                  </button>
+                )}
+              </div>
+            ) : (
+              <MessageInput
+                dmId={dmId}
+                currentUid={uid}
+                participants={participants}
+                replyTo={replyTo}
+                onCancelReply={() => setReplyTo(null)}
+                onSendText={handleSendText}
+                onSendGif={handleSendGif}
+                onSendImage={handleSendImage}
+                isDark={isDark}
+                isRateLimited={isRateLimited}
+              />
+            )}
 
             {/* Mobile bottom ad — above keyboard */}
             <div className="flex lg:hidden justify-center py-1 border-t border-[var(--border)] flex-shrink-0">
@@ -207,6 +279,15 @@ export default function DmPage() {
           </div>
         </div>
       </main>
+
+      {showProfile && otherUserForProfile && (
+        <ProfileSheet
+          user={otherUserForProfile}
+          dmId={dmId}
+          onClose={() => setShowProfile(false)}
+          onStartChat={() => setShowProfile(false)}
+        />
+      )}
     </div>
   )
 }

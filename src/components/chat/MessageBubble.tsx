@@ -12,9 +12,12 @@ interface MessageBubbleProps {
   onReply: (replyTo: ReplyTo) => void
   onReport: (msgId: string) => void
   onViewImage: (message: Message) => Promise<string | null>
+  /** Timestamp at which the OTHER participant last read — for read receipts */
+  otherReadAt?: number
 }
 
-export function MessageBubble({ message, isSelf, onReply, onReport, onViewImage }: MessageBubbleProps) {
+export function MessageBubble({ message, isSelf, onReply, onReport, onViewImage, otherReadAt }: MessageBubbleProps) {
+  const isRead = isSelf && otherReadAt != null && otherReadAt >= message.createdAt
   const [showActions, setShowActions] = useState(false)
   const touchStart = useRef<number>(0)
   const touchX = useRef<number>(0)
@@ -108,6 +111,14 @@ export function MessageBubble({ message, isSelf, onReply, onReport, onViewImage 
         {/* Timestamp + actions */}
         <div className={`flex items-center gap-2 px-1 ${isSelf ? 'flex-row-reverse' : 'flex-row'}`}>
           <span className="text-[10px] text-[var(--text-muted)]">{time}</span>
+          {isSelf && (
+            <span
+              className={`text-[10px] font-bold leading-none ${isRead ? 'text-[var(--accent)]' : 'text-[var(--text-muted)]'}`}
+              aria-label={isRead ? 'Read' : 'Sent'}
+            >
+              ✓✓
+            </span>
+          )}
 
           {/* Desktop hover actions */}
           <div className={`hidden sm:flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity`}>
