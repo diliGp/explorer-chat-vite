@@ -11,6 +11,12 @@ service cloud.firestore {
       return isSignedIn() && request.auth.uid == uid;
     }
 
+    // ── Feature Flags (read-only for all signed-in users) ─────────────────────
+    match /config/{docId} {
+      allow read: if isSignedIn();
+      allow write: if false; // manage via Firebase console only
+    }
+
     // ── Users ─────────────────────────────────────────────────────────────────
     match /users/{uid} {
       allow read: if isSignedIn();
