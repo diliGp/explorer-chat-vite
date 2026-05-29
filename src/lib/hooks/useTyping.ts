@@ -3,7 +3,7 @@ import { setTyping, listenToTyping } from '@/lib/firebase/rtdb';
 
 const TYPING_TIMEOUT = 2500; // ms
 
-export function useTyping(dmId: string, currentUid: string, participants: string[]) {
+export function useTyping(dmId: string, currentUid: string, _participants?: string[]) {
     const typingTimer = useRef<NodeJS.Timeout | null>(null);
 
     const handleInputChange = useCallback(() => {
