@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en" suppressHydrationWarning>
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.ico" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1, user-scalable=no" />
+    <meta name="theme-color" media="(prefers-color-scheme: light)" content="#ffffff" />
+    <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#09090b" />
+    <title>ChatApp — Meet &amp; Chat</title>
+    <meta name="description" content="Connect with people around the world. Free anonymous chat with real people." />
+    <script>
+      try {
+        var theme = JSON.parse(localStorage.getItem('chatapp-store') || '{}').state?.theme || 'system';
+        var dark = theme === 'dark' || (theme === 'system' && window.matchMedia('(prefers-color-scheme: dark)').matches);
+        if (dark) document.documentElement.classList.add('dark');
+      } catch(e) {}
+    </script>
+    <script type="module" crossorigin src="/assets/index-D8PYoczI.js"></script>
+    <link rel="stylesheet" crossorigin href="/assets/index-DYYn76xU.css">
+  </head>
+  <body class="h-dvh overflow-hidden bg-[var(--bg-primary)] text-[var(--text-primary)]">
+    <a href="#main-content" class="skip-link">Skip to main content</a>
+    <div id="root"></div>
+  </body>
+</html>
