@@ -1,5 +1,3 @@
-'use client'
-
 import { useState, useRef } from 'react'
 import { format } from 'date-fns'
 import type { Message, ReplyTo } from '@/types'

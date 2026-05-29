@@ -1,5 +1,3 @@
-'use client'
-
 import { useEffect, useState } from 'react'
 import { onSnapshot } from 'firebase/firestore'
 import { dmsByParticipant, usersCol } from '@/lib/firebase/firestore'

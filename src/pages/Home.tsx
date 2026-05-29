@@ -1,23 +1,20 @@
-'use client'
-
 import { useEffect } from 'react'
-import { useRouter } from 'next/navigation'
+import { useNavigate, Link } from 'react-router-dom'
 import { useAppStore } from '@/store'
 import { Sidebar } from '@/components/layout/Sidebar'
 import { AdSlot } from '@/components/layout/AdSlot'
 import { ThemeToggle } from '@/components/layout/ThemeToggle'
-import Link from 'next/link'
 
 export default function HomePage() {
   const { currentUser, authReady } = useAppStore()
-  const router = useRouter()
+  const navigate = useNavigate()
 
   useEffect(() => {
     if (!authReady) return
     if (currentUser === null) {
-      router.push('/onboarding')
+      navigate('/onboarding')
     }
-  }, [authReady, currentUser, router])
+  }, [authReady, currentUser, navigate])
 
   if (!authReady || !currentUser) {
     return (
@@ -34,14 +31,14 @@ export default function HomePage() {
 
   return (
     <div className="h-dvh flex overflow-hidden bg-[var(--bg-primary)]" id="main-content">
-      {/* Sidebar (desktop hidden on mobile, shown via separate panel) */}
+      {/* Sidebar desktop */}
       <div className="hidden sm:flex">
         <Sidebar />
       </div>
 
-      {/* Main area */}
+      {/* Main */}
       <main className="flex-1 flex flex-col overflow-hidden">
-        {/* Top banner ad */}
+        {/* Top ad */}
         <div className="hidden lg:flex justify-center py-2 border-b border-[var(--border)]">
           <AdSlot id="home-top-banner" width={728} height={90} />
         </div>
@@ -55,12 +52,12 @@ export default function HomePage() {
           <ThemeToggle />
         </div>
 
-        {/* Mobile: show sidebar inline */}
+        {/* Mobile sidebar */}
         <div className="flex-1 flex flex-col sm:hidden overflow-hidden">
           <Sidebar />
         </div>
 
-        {/* Desktop: empty state prompt */}
+        {/* Desktop empty state */}
         <div className="hidden sm:flex flex-1 flex-col items-center justify-center text-center px-6">
           <div className="w-20 h-20 rounded-3xl bg-[var(--accent-light)] flex items-center justify-center mb-6">
             <svg width="36" height="36" fill="none" viewBox="0 0 24 24" stroke="var(--accent)" strokeWidth={1.5}>
@@ -79,7 +76,7 @@ export default function HomePage() {
                 You&apos;re chatting as a guest. Register to keep your chat history and profile permanently.
               </p>
               <Link
-                href="/register"
+                to="/register"
                 className="inline-block px-4 py-2 rounded-xl text-sm font-semibold text-white bg-[var(--accent)] hover:bg-[var(--accent-hover)] transition-colors"
               >
                 Save Account

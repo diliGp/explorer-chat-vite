@@ -1,18 +1,15 @@
-'use client'
-
 import { useState } from 'react'
-import { useRouter } from 'next/navigation'
+import { useNavigate, Link } from 'react-router-dom'
 import { upgradeWithGoogle, upgradeWithEmail } from '@/lib/firebase/auth'
 import { updateDoc } from 'firebase/firestore'
 import { userDoc } from '@/lib/firebase/firestore'
 import { useAppStore } from '@/store'
 import { AdSlot } from '@/components/layout/AdSlot'
 import { ThemeToggle } from '@/components/layout/ThemeToggle'
-import Link from 'next/link'
 import toast from 'react-hot-toast'
 
 export default function RegisterPage() {
-  const router = useRouter()
+  const navigate = useNavigate()
   const { currentUser, setCurrentUser } = useAppStore()
   const [mode, setMode] = useState<'options' | 'email'>('options')
   const [email, setEmail] = useState('')
@@ -38,7 +35,7 @@ export default function RegisterPage() {
           ? 'Welcome back! Your chats have been merged into your account.'
           : 'Account saved! Welcome back.'
       )
-      router.push('/')
+      navigate('/')
     } catch (err: any) {
       toast.error('Failed to link Google. Try again.')
     } finally {
@@ -77,7 +74,7 @@ export default function RegisterPage() {
           ? 'Welcome back! Your chats have been merged into your account.'
           : 'Account saved!'
       )
-      router.push('/')
+      navigate('/')
     } catch (err: any) {
       if (err.code === 'auth/wrong-password' || err.code === 'auth/invalid-credential') {
         setErrors({ email: 'Account exists but password is incorrect. Try again.' })
@@ -201,7 +198,7 @@ export default function RegisterPage() {
           </div>
 
           <p className="text-center text-xs text-[var(--text-muted)] mt-4">
-            <Link href="/" className="text-[var(--accent)] hover:underline">Continue as guest</Link>
+            <Link to="/" className="text-[var(--accent)] hover:underline">Continue as guest</Link>
           </p>
         </div>
       </div>

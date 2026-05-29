@@ -1,5 +1,3 @@
-'use client'
-
 import type { OnlineUser } from '@/types'
 import { UserAvatar } from './UserAvatar'
 

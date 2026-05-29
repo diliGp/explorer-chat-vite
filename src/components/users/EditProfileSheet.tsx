@@ -1,9 +1,8 @@
-'use client'
-
 import { useEffect, useRef, useState } from 'react'
-import { doc, updateDoc } from 'firebase/firestore'
+import { doc, updateDoc, getDocs, query, where, collection, writeBatch } from 'firebase/firestore'
 import { db } from '@/lib/firebase/client'
-import { uploadAvatar, MAX_AVATAR_BYTES } from '@/lib/firebase/storage'
+import { uploadAvatarWithProgress, MAX_AVATAR_BYTES } from '@/lib/firebase/storage'
+import { setOnline } from '@/lib/firebase/rtdb'
 import { useAppStore } from '@/store'
 import { UserAvatar } from './UserAvatar'
 import toast from 'react-hot-toast'
@@ -20,7 +19,9 @@ export function EditProfileSheet({ onClose }: EditProfileSheetProps) {
   const [bio, setBio] = useState(currentUser?.bio ?? '')
   const [city, setCity] = useState(currentUser?.city ?? '')
   const [avatarPreview, setAvatarPreview] = useState<string | undefined>(currentUser?.avatarUrl)
-  const [avatarFile, setAvatarFile] = useState<File | null>(null)
+  const [uploadedAvatar, setUploadedAvatar] = useState<{ url: string; path: string } | null>(null)
+  const [uploadProgress, setUploadProgress] = useState<number | null>(null) // null = idle
+  const [pickerOpen, setPickerOpen] = useState(false)
   const [saving, setSaving] = useState(false)
 
   // Close on Escape
@@ -30,19 +31,35 @@ export function EditProfileSheet({ onClose }: EditProfileSheetProps) {
     return () => document.removeEventListener('keydown', handler)
   }, [onClose])
 
-  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const openFilePicker = () => {
+    setPickerOpen(true)
+    fileInputRef.current?.click()
+  }
+
+  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    setPickerOpen(false)
     const file = e.target.files?.[0]
     if (!file) return
-    if (file.size > MAX_AVATAR_BYTES) {
-      toast.error('Image must be 2 MB or smaller.')
-      return
+    if (file.size > MAX_AVATAR_BYTES) { toast.error('Image must be 2 MB or smaller.'); return }
+    if (!file.type.startsWith('image/')) { toast.error('Please choose an image file.'); return }
+
+    const previewUrl = URL.createObjectURL(file)
+    setAvatarPreview(previewUrl)
+    setUploadProgress(0)
+    setUploadedAvatar(null)
+
+    try {
+      const result = await uploadAvatarWithProgress(currentUser!.uid, file, setUploadProgress)
+      setUploadedAvatar(result)
+      // Keep the local object URL as preview — it's already loaded and avoids
+      // a flash while the Storage URL image downloads
+      setUploadProgress(null)
+    } catch {
+      toast.error('Photo upload failed. Please try again.')
+      setAvatarPreview(currentUser?.avatarUrl)
+      setUploadProgress(null)
     }
-    if (!file.type.startsWith('image/')) {
-      toast.error('Please choose an image file.')
-      return
-    }
-    setAvatarFile(file)
-    setAvatarPreview(URL.createObjectURL(file))
+    if (fileInputRef.current) fileInputRef.current.value = ''
   }
 
   const handleSave = async () => {
@@ -55,24 +72,32 @@ export function EditProfileSheet({ onClose }: EditProfileSheetProps) {
 
     setSaving(true)
     try {
-      let avatarUrl = currentUser.avatarUrl
-      let avatarPath = currentUser.avatarPath
-
-      if (avatarFile) {
-        const result = await uploadAvatar(currentUser.uid, avatarFile)
-        avatarUrl = result.url
-        avatarPath = result.path
-      }
+      const avatarUrl = uploadedAvatar?.url ?? currentUser.avatarUrl
+      const avatarPath = uploadedAvatar?.path ?? currentUser.avatarPath
 
       const updates: Record<string, any> = {
         name: trimmedName,
         bio: bio.trim() || null,
         city: city.trim() || null,
-        ...(avatarUrl !== undefined && { avatarUrl }),
-        ...(avatarPath !== undefined && { avatarPath }),
+        avatarUrl: avatarUrl ?? null,
+        avatarPath: avatarPath ?? null,
       }
 
       await updateDoc(doc(db, 'users', currentUser.uid), updates)
+
+      // Update participantNames in all DMs so other users see the new name immediately
+      if (trimmedName !== currentUser.name) {
+        const dmsSnap = await getDocs(
+          query(collection(db, 'dms'), where('participants', 'array-contains', currentUser.uid))
+        )
+        if (!dmsSnap.empty) {
+          const batch = writeBatch(db)
+          dmsSnap.forEach((dmDoc) => {
+            batch.update(dmDoc.ref, { [`participantNames.${currentUser.uid}`]: trimmedName })
+          })
+          await batch.commit()
+        }
+      }
 
       setCurrentUser({
         ...currentUser,
@@ -83,6 +108,8 @@ export function EditProfileSheet({ onClose }: EditProfileSheetProps) {
         avatarPath,
       })
 
+      // Touch RTDB presence so other users' caches see a fresh lastSeen and re-fetch this profile
+      setOnline(currentUser.uid).catch(() => {})
       toast.success('Profile updated.')
       onClose()
     } catch (err) {
@@ -136,24 +163,48 @@ export function EditProfileSheet({ onClose }: EditProfileSheetProps) {
               showFlag={false}
               avatarUrl={avatarPreview}
             />
-            <button
-              type="button"
-              onClick={() => fileInputRef.current?.click()}
-              className="absolute inset-0 rounded-full flex items-center justify-center bg-black/40 opacity-0 hover:opacity-100 transition-opacity"
-              aria-label="Change profile photo"
-            >
-              <svg width="24" height="24" fill="none" viewBox="0 0 24 24" stroke="white" strokeWidth={2}>
-                <path d="M23 19a2 2 0 01-2 2H3a2 2 0 01-2-2V8a2 2 0 012-2h4l2-3h6l2 3h4a2 2 0 012 2z"/>
-                <circle cx="12" cy="13" r="4"/>
-              </svg>
-            </button>
+            {pickerOpen && uploadProgress === null ? (
+              <div className="absolute inset-0 rounded-full bg-[var(--bg-elevated)] animate-pulse" />
+            ) : uploadProgress !== null ? (
+              <div className="absolute inset-0 rounded-full flex items-center justify-center bg-black/60">
+                <svg width="48" height="48" viewBox="0 0 48 48" className="-rotate-90">
+                  <circle cx="24" cy="24" r="20" fill="none" stroke="rgba(255,255,255,0.2)" strokeWidth="4" />
+                  <circle
+                    cx="24" cy="24" r="20" fill="none" stroke="white" strokeWidth="4"
+                    strokeDasharray={`${2 * Math.PI * 20}`}
+                    strokeDashoffset={`${2 * Math.PI * 20 * (1 - uploadProgress / 100)}`}
+                    strokeLinecap="round"
+                    style={{ transition: 'stroke-dashoffset 0.2s ease' }}
+                  />
+                </svg>
+                <span className="absolute text-white text-xs font-semibold">{uploadProgress}%</span>
+              </div>
+            ) : (
+              <button
+                type="button"
+                onClick={openFilePicker}
+                className="absolute inset-0 rounded-full flex items-center justify-center bg-black/40 opacity-0 hover:opacity-100 transition-opacity"
+                aria-label="Change profile photo"
+                disabled={saving}
+              >
+                <svg width="24" height="24" fill="none" viewBox="0 0 24 24" stroke="white" strokeWidth={2}>
+                  <path d="M23 19a2 2 0 01-2 2H3a2 2 0 01-2-2V8a2 2 0 012-2h4l2-3h6l2 3h4a2 2 0 012 2z"/>
+                  <circle cx="12" cy="13" r="4"/>
+                </svg>
+              </button>
+            )}
           </div>
           <button
             type="button"
-            onClick={() => fileInputRef.current?.click()}
-            className="text-sm text-[var(--accent)] hover:underline"
+            onClick={openFilePicker}
+            disabled={uploadProgress !== null || pickerOpen || saving}
+            className="text-sm text-[var(--accent)] hover:underline disabled:opacity-50 disabled:cursor-not-allowed"
           >
-            {avatarPreview ? 'Change photo' : 'Add photo'}
+            {pickerOpen && uploadProgress === null
+              ? 'Waiting for file…'
+              : uploadProgress !== null
+              ? `Uploading… ${uploadProgress}%`
+              : avatarPreview ? 'Change photo' : 'Add photo'}
           </button>
           <input
             ref={fileInputRef}
@@ -216,7 +267,7 @@ export function EditProfileSheet({ onClose }: EditProfileSheetProps) {
         <button
           type="button"
           onClick={handleSave}
-          disabled={saving}
+          disabled={saving || uploadProgress !== null}
           className="mt-6 w-full py-3 rounded-xl font-semibold text-white bg-[var(--accent)] hover:bg-[var(--accent-hover)] disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
         >
           {saving ? (

@@ -1,8 +1,6 @@
-'use client'
-
 import { useState } from 'react'
-import { useRouter } from 'next/navigation'
-import Link from 'next/link'
+import { useNavigate } from 'react-router-dom'
+import { Link } from 'react-router-dom'
 import { useOnlineUsers } from '@/lib/hooks/useOnlineUsers'
 import { useRecentChats } from '@/lib/hooks/useRecentChats'
 import { useAppStore } from '@/store'
@@ -13,7 +11,6 @@ import { ThemeToggle } from './ThemeToggle'
 import { AdSlot } from './AdSlot'
 import { getDmId } from '@/lib/firebase/firestore'
 import { setDoc } from 'firebase/firestore'
-import { dmDoc } from '@/lib/firebase/firestore'
 import { db } from '@/lib/firebase/client'
 import { doc } from 'firebase/firestore'
 import { handleLogout } from '@/lib/hooks/useAuth'
@@ -22,13 +19,13 @@ export function Sidebar() {
   const { onlineUsers, loading } = useOnlineUsers()
   const { currentUser, setCurrentUser } = useAppStore()
   const { recentChats } = useRecentChats(currentUser?.uid ?? '')
-  const router = useRouter()
+  const navigate = useNavigate()
   const [showEditProfile, setShowEditProfile] = useState(false)
 
   const handleSignOut = async () => {
     if (!currentUser) return
     await handleLogout(!currentUser.isPermanent, currentUser.uid, setCurrentUser)
-    router.push('/onboarding')
+    navigate('/onboarding')
   }
 
   // Build maps keyed by other user's UID
@@ -84,7 +81,7 @@ export function Sidebar() {
       })
     }
 
-    router.push(`/dm/${dmId}`)
+    navigate(`/dm/${dmId}`)
   }
 
   return (
@@ -94,7 +91,7 @@ export function Sidebar() {
     >
       {/* Header — hidden on mobile (page.tsx renders its own header there) */}
       <div className="hidden sm:flex items-center justify-between px-4 py-4 border-b border-[var(--border)]">
-        <Link href="/" className="flex items-center gap-2 font-bold text-[var(--text-primary)] text-lg">
+        <Link to="/" className="flex items-center gap-2 font-bold text-[var(--text-primary)] text-lg">
           <span className="w-7 h-7 bg-[var(--accent)] rounded-lg flex items-center justify-center text-white text-sm">
             C
           </span>
@@ -200,10 +197,10 @@ export function Sidebar() {
       <div className="px-4 py-3 border-t border-[var(--border)]">
         {/* Nav links */}
         <div className="flex flex-wrap gap-x-3 gap-y-1 text-xs text-[var(--text-muted)] mb-2">
-          <Link href="/privacy-policy" className="hover:text-[var(--text-primary)] transition-colors">Privacy</Link>
-          <Link href="/terms" className="hover:text-[var(--text-primary)] transition-colors">Terms</Link>
+          <Link to="/privacy-policy" className="hover:text-[var(--text-primary)] transition-colors">Privacy</Link>
+          <Link to="/terms" className="hover:text-[var(--text-primary)] transition-colors">Terms</Link>
           {currentUser && !currentUser.isPermanent && (
-            <Link href="/register" className="text-[var(--accent)] font-medium hover:underline">
+            <Link to="/register" className="text-[var(--accent)] font-medium hover:underline">
               Save Account
             </Link>
           )}

@@ -1,6 +1,7 @@
 import {
   ref,
   uploadBytes,
+  uploadBytesResumable,
   getDownloadURL,
   deleteObject,
 } from 'firebase/storage'
@@ -23,6 +24,33 @@ export async function uploadAvatar(
   await uploadBytes(storageRef, file, { contentType: file.type })
   const url = await getDownloadURL(storageRef)
   return { url, path }
+}
+
+/**
+ * Upload avatar with progress callback (0–100).
+ */
+export function uploadAvatarWithProgress(
+  uid: string,
+  file: File,
+  onProgress: (pct: number) => void
+): Promise<{ url: string; path: string }> {
+  if (file.size > MAX_AVATAR_BYTES) return Promise.reject(new Error('Image must be 2 MB or smaller.'))
+  if (!file.type.startsWith('image/')) return Promise.reject(new Error('Please choose an image file.'))
+  const path = `avatars/${uid}/avatar`
+  const storageRef = ref(storage, path)
+  const task = uploadBytesResumable(storageRef, file, { contentType: file.type })
+
+  return new Promise((resolve, reject) => {
+    task.on(
+      'state_changed',
+      (snap) => onProgress(Math.round((snap.bytesTransferred / snap.totalBytes) * 100)),
+      reject,
+      async () => {
+        const url = await getDownloadURL(task.snapshot.ref)
+        resolve({ url, path })
+      }
+    )
+  })
 }
 
 /**

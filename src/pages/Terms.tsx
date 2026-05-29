@@ -1,10 +1,4 @@
-import type { Metadata } from 'next'
-import Link from 'next/link'
-
-export const metadata: Metadata = {
-  title: 'Terms of Service — ChatApp',
-  description: 'Rules and terms for using the ChatApp platform.',
-}
+import { Link } from 'react-router-dom'
 
 export default function TermsPage() {
   const lastUpdated = 'May 27, 2026'
@@ -12,7 +6,7 @@ export default function TermsPage() {
   return (
     <div className="min-h-dvh bg-[var(--bg-primary)] py-12 px-4">
       <article className="max-w-2xl mx-auto" aria-label="Terms of Service">
-        <Link href="/" className="inline-flex items-center gap-1.5 text-sm text-[var(--accent)] hover:underline mb-8">
+        <Link to="/" className="inline-flex items-center gap-1.5 text-sm text-[var(--accent)] hover:underline mb-8">
           <svg width="14" height="14" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path d="M15 18l-6-6 6-6"/></svg>
           Back to ChatApp
         </Link>

@@ -1,7 +1,5 @@
-'use client'
-
 import { useState, useEffect } from 'react'
-import { useRouter } from 'next/navigation'
+import { useNavigate } from 'react-router-dom'
 import { doc, setDoc } from 'firebase/firestore'
 import { db } from '@/lib/firebase/client'
 import { auth } from '@/lib/firebase/client'
@@ -48,7 +46,7 @@ async function detectCountry(): Promise<string> {
 }
 
 export function ProfileForm() {
-  const router = useRouter()
+  const navigate = useNavigate()
   const { setCurrentUser, setAuthReady } = useAppStore()
   const [detectedCountry, setDetectedCountry] = useState('US')
   const [form, setForm] = useState({
@@ -112,7 +110,7 @@ export function ProfileForm() {
         gender: form.gender as Gender,
         country: detectedCountry,
         city: location,
-        bio: form.bio.trim() || undefined,
+        bio: form.bio.trim() || "",
         isPermanent: false,
         isOnline: true,
         lastSeen: Date.now(),
@@ -127,7 +125,7 @@ export function ProfileForm() {
       setCurrentUser(profile)
       setAuthReady(true)
       toast.success('Welcome to ChatApp!')
-      router.push('/')
+      navigate('/')
     } catch (err) {
       toast.error('Failed to create profile. Please try again.')
       console.error(err)
@@ -194,11 +192,10 @@ export function ProfileForm() {
             {GENDER_OPTIONS.map((opt) => (
               <label
                 key={opt.value}
-                className={`flex items-center gap-2.5 px-3 py-2.5 rounded-xl border cursor-pointer transition-colors ${
-                  form.gender === opt.value
+                className={`flex items-center gap-2.5 px-3 py-2.5 rounded-xl border cursor-pointer transition-colors ${form.gender === opt.value
                     ? 'border-[var(--accent)] bg-[var(--accent-light)]'
                     : 'border-[var(--border)] bg-[var(--bg-surface)] hover:bg-[var(--bg-elevated)]'
-                }`}
+                  }`}
               >
                 <input
                   type="radio"

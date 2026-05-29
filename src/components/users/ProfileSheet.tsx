@@ -1,5 +1,3 @@
-'use client'
-
 import { useEffect, useState } from 'react'
 import type { OnlineUser } from '@/types'
 import { UserAvatar } from './UserAvatar'

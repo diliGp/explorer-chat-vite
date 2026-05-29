@@ -1,11 +1,9 @@
-'use client'
-
 import { useState, useEffect } from 'react'
-import { useRouter } from 'next/navigation'
-import { useParams } from 'next/navigation'
+import { useNavigate } from 'react-router-dom'
+import { useParams } from 'react-router-dom'
 import { useAppStore } from '@/store'
 import { useMessages, RateLimitError } from '@/lib/hooks/useMessages'
-import { useTyping, useTypingStatus } from '@/lib/hooks/useTyping'
+import { useTypingStatus } from '@/lib/hooks/useTyping'
 import { MessageList } from '@/components/chat/MessageList'
 import { MessageInput } from '@/components/chat/MessageInput'
 import { ClearChatMenu } from '@/components/chat/ClearChatMenu'
@@ -17,14 +15,13 @@ import { ThemeToggle } from '@/components/layout/ThemeToggle'
 import { dmDoc, userDoc } from '@/lib/firebase/firestore'
 import { onSnapshot, updateDoc, getDoc } from 'firebase/firestore'
 import type { DM, OnlineUser, ReplyTo } from '@/types'
-import Link from 'next/link'
+import { Link } from 'react-router-dom'
 import toast from 'react-hot-toast'
 
 export default function DmPage() {
-  const params = useParams()
-  const dmId = params.userId as string // route param is actually dmId
-  const router = useRouter()
-  const { currentUser } = useAppStore()
+  const { dmId = '' } = useParams<{ dmId: string }>()
+  const navigate = useNavigate()
+  const { currentUser, authReady } = useAppStore()
   const [dm, setDm] = useState<DM | null>(null)
   const [replyTo, setReplyTo] = useState<ReplyTo | null>(null)
   const [isDark, setIsDark] = useState(false)
@@ -45,10 +42,10 @@ export default function DmPage() {
     if (!dmId) return
     const unsub = onSnapshot(dmDoc(dmId), (snap) => {
       if (snap.exists()) setDm({ ...snap.data(), id: snap.id } as DM)
-      else router.push('/')
+      else navigate('/')
     })
     return unsub
-  }, [dmId, router])
+  }, [dmId, navigate])
 
   const uid = currentUser?.uid ?? ''
   const name = currentUser?.name ?? 'You'
@@ -162,8 +159,12 @@ export default function DmPage() {
   const theyBlockedMe = (dm?.blockedBy ?? []).includes(otherUid)
   const isBlocked = iBlockedThem || theyBlockedMe
 
-  if (!currentUser) {
-    return null
+  if (!authReady || !currentUser) {
+    return (
+      <div className="h-dvh flex items-center justify-center bg-[var(--bg-primary)]">
+        <div className="w-8 h-8 border-2 border-[var(--accent)] border-t-transparent rounded-full animate-spin" />
+      </div>
+    )
   }
 
   return (
@@ -188,7 +189,7 @@ export default function DmPage() {
             <header className="flex items-center gap-3 px-4 py-3 border-b border-[var(--border)] flex-shrink-0">
               {/* Back button (mobile) */}
               <Link
-                href="/"
+                to="/"
                 className="sm:hidden w-8 h-8 flex items-center justify-center rounded-full hover:bg-[var(--bg-elevated)] transition-colors"
                 aria-label="Back to users list"
               >

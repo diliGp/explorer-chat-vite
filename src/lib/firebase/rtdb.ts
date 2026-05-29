@@ -1,11 +1,4 @@
-import {
-  ref,
-  set,
-  onValue,
-  onDisconnect,
-  get,
-  serverTimestamp,
-} from 'firebase/database'
+import { ref, set, onValue, onDisconnect, serverTimestamp } from 'firebase/database'
 import { rtdb } from './client'
 
 export const presenceRef = (uid: string) => ref(rtdb, `presence/${uid}`)
@@ -27,7 +20,7 @@ export function setupPresence(uid: string): () => void {
   const unsub = onValue(connectedRef, (snap) => {
     if (snap.val() === true) {
       // Re-register onDisconnect and set online every time we reconnect
-      onDisconnect(pRef).set({ online: false, lastSeen: Date.now() }).catch(() => {})
+      onDisconnect(pRef).set({ online: false, lastSeen: serverTimestamp() }).catch(() => {})
       set(pRef, { online: true, lastSeen: Date.now() }).catch(() => {})
     }
   })

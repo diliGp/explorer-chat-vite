@@ -1,5 +1,3 @@
-'use client'
-
 import { useEffect, useState, useCallback } from 'react'
 import {
   onSnapshot,
@@ -58,7 +56,6 @@ export function useMessages(
     async (messageData: Omit<Message, 'id'>, preview: string): Promise<void> => {
       const dmRef = dmDoc(dmId)
       const msgsColRef = messagesCol(dmId)
-      const newMsgRef = doc(msgsColRef)
       // Both writes in parallel — message appears instantly via onSnapshot
       await Promise.all([
         updateDoc(dmRef, {

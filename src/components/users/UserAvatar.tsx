@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import type { Gender } from '@/types'
 import { getFlag } from '@/lib/utils/countries'
 
@@ -36,6 +36,10 @@ export function UserAvatar({
   avatarUrl,
 }: UserAvatarProps) {
   const [imgFailed, setImgFailed] = useState(false)
+
+  // Reset error state when URL changes so a new valid URL is retried
+  useEffect(() => { setImgFailed(false) }, [avatarUrl])
+
   const { outer, font, dot } = SIZES[size]
   const color = GENDER_COLORS[gender]
   const initial = name.charAt(0).toUpperCase()

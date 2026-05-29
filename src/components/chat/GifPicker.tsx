@@ -1,5 +1,4 @@
-'use client'
-
+/// <reference types="vite/client" />
 import { useState, useEffect, useCallback, useRef } from 'react'
 import FocusTrap from 'focus-trap-react'
 
@@ -16,7 +15,7 @@ interface GifPickerProps {
   onClose: () => void
 }
 
-const TENOR_KEY = process.env.NEXT_PUBLIC_TENOR_API_KEY || ''
+const TENOR_KEY = import.meta.env.VITE_TENOR_API_KEY || ''
 const TENOR_BASE = 'https://tenor.googleapis.com/v2'
 
 export function GifPicker({ onSelect, onClose }: GifPickerProps) {

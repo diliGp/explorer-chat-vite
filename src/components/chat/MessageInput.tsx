@@ -1,5 +1,3 @@
-'use client'
-
 import { useState, useRef, useCallback } from 'react'
 import { useTyping } from '@/lib/hooks/useTyping'
 import type { ReplyTo } from '@/types'

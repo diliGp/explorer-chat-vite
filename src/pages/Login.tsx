@@ -1,15 +1,12 @@
-'use client'
-
 import { useState } from 'react'
-import { useRouter } from 'next/navigation'
+import { useNavigate, Link } from 'react-router-dom'
 import { signInWithEmailAndPassword, signInWithPopup, GoogleAuthProvider } from 'firebase/auth'
 import { auth } from '@/lib/firebase/client'
 import { ThemeToggle } from '@/components/layout/ThemeToggle'
-import Link from 'next/link'
 import toast from 'react-hot-toast'
 
 export default function LoginPage() {
-  const router = useRouter()
+  const navigate = useNavigate()
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [loading, setLoading] = useState(false)
@@ -22,7 +19,7 @@ export default function LoginPage() {
     try {
       await signInWithEmailAndPassword(auth, email, password)
       toast.success('Welcome back!')
-      router.push('/')
+      navigate('/')
     } catch (err: any) {
       if (err.code === 'auth/user-not-found' || err.code === 'auth/wrong-password' || err.code === 'auth/invalid-credential') {
         setError('Invalid email or password.')
@@ -40,7 +37,7 @@ export default function LoginPage() {
       const provider = new GoogleAuthProvider()
       await signInWithPopup(auth, provider)
       toast.success('Welcome back!')
-      router.push('/')
+      navigate('/')
     } catch {
       toast.error('Google sign-in failed.')
     } finally {
@@ -122,7 +119,7 @@ export default function LoginPage() {
 
         <p className="text-center text-xs text-[var(--text-muted)] mt-4">
           No account?{' '}
-          <Link href="/onboarding" className="text-[var(--accent)] hover:underline">Chat as guest</Link>
+          <Link to="/onboarding" className="text-[var(--accent)] hover:underline">Chat as guest</Link>
         </p>
       </div>
     </div>

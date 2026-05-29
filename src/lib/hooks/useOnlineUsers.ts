@@ -1,5 +1,3 @@
-'use client'
-
 import { useEffect, useState } from 'react'
 import { listenToAllPresence } from '@/lib/firebase/rtdb'
 import { usersCol } from '@/lib/firebase/firestore'
@@ -14,26 +12,25 @@ export function useOnlineUsers() {
   const blockedUsers: string[] = currentUser?.blockedUsers ?? []
 
   useEffect(() => {
+    const CACHE_TTL_MS = 60_000 // re-fetch profiles every 60s to pick up avatar/bio changes
     let profileCache: Record<string, OnlineUser> = {}
+    let profileFetchedAt: Record<string, number> = {}
 
-    // Safety: if RTDB never responds, stop showing skeletons after 5s
     const fallbackTimer = setTimeout(() => setLoading(false), 5000)
-
-    // 30s grace: keep a user visible briefly after going offline to avoid flicker
-    const GRACE_MS = 30_000
 
     const unsubscribe = listenToAllPresence(async (presenceData) => {
       clearTimeout(fallbackTimer)
 
-      const now = Date.now()
       const visibleUids = Object.keys(presenceData).filter((uid) => {
         const p = presenceData[uid]
-        if (!p) return false
-        return p.online || (now - (p.lastSeen ?? 0) < GRACE_MS)
+        return p?.online === true
       })
 
-      // Fetch profiles not yet cached
-      const uncached = visibleUids.filter((uid) => !profileCache[uid])
+      // Fetch profiles not yet cached OR whose cache entry is stale
+      const now = Date.now()
+      const uncached = visibleUids.filter(
+        (uid) => !profileCache[uid] || now - (profileFetchedAt[uid] ?? 0) > CACHE_TTL_MS
+      )
       if (uncached.length > 0) {
         const chunks = chunkArray(uncached, 10) // Firestore 'in' limit
         for (const chunk of chunks) {
@@ -53,6 +50,7 @@ export function useOnlineUsers() {
                 isOnline: true,
                 lastSeen: presenceData[snap.id]?.lastSeen ?? Date.now(),
               }
+              profileFetchedAt[snap.id] = Date.now()
             })
           } catch (e: any) {
             console.error('[useOnlineUsers] Firestore query failed:', e.message)
