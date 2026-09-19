@@ -6,12 +6,17 @@ export interface FeatureFlags {
     showAds: boolean
     adsAllowlist: string[]
     adsDenylist: string[]
+    /** Minutes of inactivity before a session is auto-logged-out (see
+     *  useAuth.ts). <= 0 disables the feature entirely. Changeable live from
+     *  Firebase Console — no redeploy needed. */
+    inactivityLogoutMinutes: number
 }
 
 const DEFAULTS: FeatureFlags = {
     showAds: true,
     adsAllowlist: [], // empty = show to all users
     adsDenylist: [],  // empty = no one blocked
+    inactivityLogoutMinutes: 5,
 }
 
 /**
@@ -24,7 +29,8 @@ const DEFAULTS: FeatureFlags = {
  * {
  *   "showAds": true,          // master on/off switch
  *   "adsAllowlist": [],        // if non-empty, only these UIDs see ads
- *   "adsDenylist": ["uid_x"]  // these UIDs never see ads (overrides allowlist)
+ *   "adsDenylist": ["uid_x"],  // these UIDs never see ads (overrides allowlist)
+ *   "inactivityLogoutMinutes": 5  // see useAuth.ts; <= 0 disables auto-logout
  * }
  * ```
  *
@@ -39,7 +45,9 @@ const DEFAULTS: FeatureFlags = {
  *
  * @param uid - The current user's UID (optional; when absent, only the global toggle applies)
  */
-export function useFeatureFlags(uid?: string): { showAds: boolean } {
+export function useFeatureFlags(
+    uid?: string
+): { showAds: boolean; inactivityLogoutMinutes: number } {
     const [rawFlags, setRawFlags] = useState<FeatureFlags>(DEFAULTS)
 
     useEffect(() => {
@@ -62,7 +70,7 @@ export function useFeatureFlags(uid?: string): { showAds: boolean } {
     }, [])
 
     const showAds = resolveShowAds(rawFlags, uid)
-    return { showAds }
+    return { showAds, inactivityLogoutMinutes: rawFlags.inactivityLogoutMinutes }
 }
 
 /**

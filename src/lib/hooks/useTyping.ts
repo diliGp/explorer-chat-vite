@@ -37,9 +37,12 @@ export function useTypingStatus(dmId: string, participants: string[], currentUid
         if (!dmId || participants.length === 0) return;
         const others = participants.filter((uid) => uid !== currentUid);
         if (others.length === 0) return;
-        const unsubscribe = listenToTyping(dmId, others, (uids) => {
-            setTypingUids(uids);
-        });
+        const unsubscribe = listenToTyping(
+            dmId,
+            others,
+            (uids) => setTypingUids(uids),
+            (err) => console.error('[useTypingStatus] listener failed:', err)
+        );
         return unsubscribe;
     }, [dmId, participants, currentUid]);
 

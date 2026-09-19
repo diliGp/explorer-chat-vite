@@ -239,6 +239,14 @@ export function Sidebar() {
                             Save Account
                         </Link>
                     )}
+                    {currentUser?.isAdmin && (
+                        <Link
+                            to="/admin/reports"
+                            className="hover:text-[var(--text-primary)] transition-colors"
+                        >
+                            Reports
+                        </Link>
+                    )}
                 </div>
 
                 {/* Current user row */}

@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useParams } from 'react-router-dom';
 import { useAppStore } from '@/store';
+import { handleLogout } from '@/lib/hooks/useAuth';
 import { useMessages, RateLimitError } from '@/lib/hooks/useMessages';
 import { useTypingStatus } from '@/lib/hooks/useTyping';
 import { MessageList } from '@/components/chat/MessageList';
@@ -21,13 +22,23 @@ import toast from 'react-hot-toast';
 export default function DmPage() {
     const { dmId = '' } = useParams<{ dmId: string }>();
     const navigate = useNavigate();
-    const { currentUser, authReady } = useAppStore();
+    const { currentUser, authReady, setCurrentUser } = useAppStore();
     const [dm, setDm] = useState<DM | null>(null);
     const [replyTo, setReplyTo] = useState<ReplyTo | null>(null);
     const [isDark, setIsDark] = useState(false);
     const [showProfile, setShowProfile] = useState(false);
     const [otherAvatarUrl, setOtherAvatarUrl] = useState<string | undefined>();
     const [otherBio, setOtherBio] = useState<string | undefined>();
+
+    // Without this, a session ending while this page is open (inactivity
+    // auto-logout, or any other future cause of currentUser going null) leaves
+    // the user stuck on the loading spinner below forever — Home.tsx has this
+    // same redirect, but nothing here previously did.
+    useEffect(() => {
+        if (authReady && currentUser === null) {
+            navigate('/onboarding');
+        }
+    }, [authReady, currentUser, navigate]);
 
     useEffect(() => {
         setIsDark(document.documentElement.classList.contains('dark'));
@@ -51,8 +62,27 @@ export default function DmPage() {
     const name = currentUser?.name ?? 'You';
     const isPermanent = currentUser?.isPermanent ?? false;
 
-    const { messages, loading, sendText, sendGif, sendImage, viewImage, reportMessage, clearChat } =
-        useMessages(dmId, uid, name, isPermanent);
+    const {
+        messages,
+        loading,
+        hasMore,
+        loadingOlder,
+        loadOlderMessages,
+        sendText,
+        sendGif,
+        sendImage,
+        viewImage,
+        reportMessage,
+        clearChat,
+    } = useMessages(
+        dmId,
+        uid,
+        name,
+        isPermanent,
+        dm?.lastSenderId ?? '',
+        dm?.consecutiveSenderCount ?? 0,
+        dm?.bothReplied ?? false
+    );
 
     // Rate-limit: anon users can send at most 2 opening messages until other party replies.
     // Once dm.bothReplied is true (set server-side on first cross-party message), no limit ever again.
@@ -95,6 +125,17 @@ export default function DmPage() {
         }
     }, [dm?.lastMessageAt, dmId, uid]); // eslint-disable-line react-hooks/exhaustive-deps
 
+    // Sign-out from the chat header, on any viewport. The desktop Sidebar has
+    // its own "Sign out"/"Leave & delete" control too (redundant on desktop,
+    // intentionally so) — this one exists because the Sidebar isn't rendered
+    // at all on mobile while inside a conversation, so there was previously no
+    // way to log out from here without navigating back.
+    const handleSignOutMobile = async () => {
+        if (!currentUser) return;
+        await handleLogout(!!currentUser.isPermanent, currentUser.uid, setCurrentUser);
+        navigate('/onboarding');
+    };
+
     const handleClearChat = async () => {
         await clearChat();
         toast.success('Chat cleared.');
@@ -106,6 +147,11 @@ export default function DmPage() {
         toast.success('Message reported. Thank you.');
     };
 
+    // NOTE: these all rethrow after toasting — MessageInput's handleSend relies
+    // on the rejection to restore the composer text it already cleared
+    // optimistically. Swallowing the error here (as this used to do for
+    // RateLimitError) makes MessageInput think the send succeeded and the
+    // typed message is silently lost.
     const handleSendText = async (text: string, replyTo?: ReplyTo) => {
         try {
             await sendText(text, replyTo);
@@ -113,8 +159,9 @@ export default function DmPage() {
             if (err instanceof RateLimitError) {
                 toast.error('Wait for a reply before sending more messages.');
             } else {
-                throw err;
+                toast.error('Failed to send. Please try again.');
             }
+            throw err;
         }
     };
 
@@ -125,8 +172,9 @@ export default function DmPage() {
             if (err instanceof RateLimitError) {
                 toast.error('Wait for a reply before sending more messages.');
             } else {
-                throw err;
+                toast.error('Failed to send. Please try again.');
             }
+            throw err;
         }
     };
 
@@ -137,8 +185,9 @@ export default function DmPage() {
             if (err instanceof RateLimitError) {
                 toast.error('Wait for a reply before sending more messages.');
             } else {
-                throw err;
+                toast.error('Failed to send image. Please try again.');
             }
+            throw err;
         }
     };
 
@@ -235,6 +284,28 @@ export default function DmPage() {
 
                             <ThemeToggle />
                             <ClearChatMenu onClearChat={handleClearChat} />
+
+                            {/* Sign out — also shown on desktop (redundant with the Sidebar's
+                                control) so it's always reachable straight from the chat header. */}
+                            <button
+                                onClick={handleSignOutMobile}
+                                aria-label={currentUser.isPermanent ? 'Sign out' : 'Leave & delete'}
+                                title={currentUser.isPermanent ? 'Sign out' : 'Leave & delete'}
+                                className="w-8 h-8 flex-shrink-0 flex items-center justify-center rounded-full hover:bg-[var(--bg-elevated)] transition-colors text-[var(--danger)]"
+                            >
+                                <svg
+                                    width="18"
+                                    height="18"
+                                    fill="none"
+                                    viewBox="0 0 24 24"
+                                    stroke="currentColor"
+                                    strokeWidth={2}
+                                >
+                                    <path d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4" />
+                                    <polyline points="16 17 21 12 16 7" />
+                                    <line x1="21" y1="12" x2="9" y2="12" />
+                                </svg>
+                            </button>
                         </header>
 
                         {/* Messages */}
@@ -247,6 +318,9 @@ export default function DmPage() {
                             onViewImage={viewImage}
                             loading={loading}
                             otherReadAt={dm?.lastReadAt?.[otherUid] ?? 0}
+                            hasMore={hasMore}
+                            loadingOlder={loadingOlder}
+                            onLoadOlder={loadOlderMessages}
                         />
 
                         {/* Input / blocked banner */}
