@@ -9,6 +9,7 @@ import LoginPage from '@/pages/Login';
 import RegisterPage from '@/pages/Register';
 import PrivacyPolicyPage from '@/pages/PrivacyPolicy';
 import TermsPage from '@/pages/Terms';
+import AdminReportsPage from '@/pages/AdminReports';
 
 function AppContent() {
     useTheme();
@@ -24,6 +25,7 @@ function AppContent() {
                 <Route path="/register" element={<RegisterPage />} />
                 <Route path="/privacy-policy" element={<PrivacyPolicyPage />} />
                 <Route path="/terms" element={<TermsPage />} />
+                <Route path="/admin/reports" element={<AdminReportsPage />} />
                 <Route path="*" element={<Navigate to="/" replace />} />
             </Routes>
             <Toaster

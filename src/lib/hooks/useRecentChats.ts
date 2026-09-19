@@ -1,7 +1,6 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { onSnapshot } from 'firebase/firestore';
-import { dmsByParticipant, usersCol } from '@/lib/firebase/firestore';
-import { getDocs, query, where, documentId } from 'firebase/firestore';
+import { dmsByParticipant, fetchUserProfilesByUid } from '@/lib/firebase/firestore';
 import { useAppStore } from '@/store';
 import type { DM, OnlineUser } from '@/types';
 
@@ -12,10 +11,18 @@ export interface RecentChat {
 }
 
 export function useRecentChats(currentUid: string) {
-    const [recentChats, setRecentChats] = useState<RecentChat[]>([]);
+    // Unfiltered — kept out of the effect below so blocking/unblocking someone
+    // takes effect immediately without resubscribing the DM listener (the effect
+    // has an empty-ish dep array and would otherwise close over a stale value).
+    const [rawRecentChats, setRawRecentChats] = useState<RecentChat[]>([]);
     const [loading, setLoading] = useState(true);
     const currentUser = useAppStore((s) => s.currentUser);
-    const blockedUsers: string[] = currentUser?.blockedUsers ?? [];
+    const blockedUsers = useMemo(() => currentUser?.blockedUsers ?? [], [currentUser]);
+
+    const recentChats = useMemo(
+        () => rawRecentChats.filter((c) => !blockedUsers.includes(c.otherUser.uid)),
+        [rawRecentChats, blockedUsers]
+    );
 
     useEffect(() => {
         if (!currentUid) return;
@@ -26,31 +33,23 @@ export function useRecentChats(currentUid: string) {
             const uncached = uids.filter((uid) => !profileCache[uid]);
             if (uncached.length === 0) return;
 
-            const chunks: string[][] = [];
-            for (let i = 0; i < uncached.length; i += 10) {
-                chunks.push(uncached.slice(i, i + 10));
-            }
-            for (const chunk of chunks) {
-                try {
-                    const q = query(usersCol(), where(documentId(), 'in', chunk));
-                    const snaps = await getDocs(q);
-                    snaps.forEach((snap) => {
-                        const data = snap.data();
-                        profileCache[snap.id] = {
-                            uid: snap.id,
-                            name: data.name,
-                            gender: data.gender,
-                            country: data.country,
-                            city: data.city,
-                            avatarUrl: data.avatarUrl,
-                            bio: data.bio,
-                            isOnline: false,
-                            lastSeen: 0,
-                        };
-                    });
-                } catch (e: any) {
-                    console.error('[useRecentChats] profile fetch failed:', e.message);
+            try {
+                const profiles = await fetchUserProfilesByUid(uncached);
+                for (const [uid, data] of Object.entries(profiles)) {
+                    profileCache[uid] = {
+                        uid,
+                        name: data.name,
+                        gender: data.gender,
+                        country: data.country,
+                        city: data.city,
+                        avatarUrl: data.avatarUrl,
+                        bio: data.bio,
+                        isOnline: false,
+                        lastSeen: 0,
+                    };
                 }
+            } catch (e: any) {
+                console.error('[useRecentChats] profile fetch failed:', e.message);
             }
         };
 
@@ -65,10 +64,7 @@ export function useRecentChats(currentUid: string) {
             await fetchProfiles(otherUids);
 
             const chats: RecentChat[] = dms
-                .filter((dm) => {
-                    const otherUid = dm.participants.find((p) => p !== currentUid);
-                    return otherUid && !blockedUsers.includes(otherUid);
-                })
+                .filter((dm) => dm.participants.some((p) => p !== currentUid))
                 .map((dm) => {
                     const otherUid = dm.participants.find((p) => p !== currentUid) ?? '';
                     const lastRead = dm.lastReadAt?.[currentUid] ?? 0;
@@ -89,7 +85,10 @@ export function useRecentChats(currentUid: string) {
                     };
                 });
 
-            setRecentChats(chats);
+            setRawRecentChats(chats);
+            setLoading(false);
+        }, (err) => {
+            console.error('[useRecentChats] listener failed:', err);
             setLoading(false);
         });
 

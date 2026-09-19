@@ -3,7 +3,11 @@ import { rtdb } from './client';
 
 export const presenceRef = (uid: string) => ref(rtdb, `presence/${uid}`);
 
-export const typingRef = (uid: string, dmId: string) => ref(rtdb, `presence/${uid}/typing/${dmId}`);
+// Typing state lives at its own top-level path (see database.rules.json's `typing`
+// node) — NOT nested under `presence/{uid}`. Nesting it there would mean every
+// keystroke fans out through `listenToAllPresence`'s whole-tree subscription and
+// re-triggers every client's online-user profile pass.
+export const typingRef = (uid: string, dmId: string) => ref(rtdb, `typing/${dmId}/${uid}`);
 
 // Tracks the active presence unsubscribe so we don't stack listeners
 let presenceUnsub: (() => void) | null = null;
@@ -55,35 +59,46 @@ export async function setTyping(uid: string, dmId: string, isTyping: boolean) {
 
 export function listenToPresence(
     uid: string,
-    callback: (data: { online: boolean; lastSeen: number }) => void
+    callback: (data: { online: boolean; lastSeen: number }) => void,
+    onError?: (err: Error) => void
 ) {
-    return onValue(presenceRef(uid), (snap) => {
-        callback(snap.val() ?? { online: false, lastSeen: Date.now() });
-    });
+    return onValue(
+        presenceRef(uid),
+        (snap) => callback(snap.val() ?? { online: false, lastSeen: Date.now() }),
+        (err) => onError?.(err)
+    );
 }
 
 export function listenToAllPresence(
-    callback: (data: Record<string, { online: boolean; lastSeen: number }>) => void
+    callback: (data: Record<string, { online: boolean; lastSeen: number }>) => void,
+    onError?: (err: Error) => void
 ) {
-    return onValue(ref(rtdb, 'presence'), (snap) => {
-        callback(snap.val() ?? {});
-    });
+    return onValue(
+        ref(rtdb, 'presence'),
+        (snap) => callback(snap.val() ?? {}),
+        (err) => onError?.(err)
+    );
 }
 
 export function listenToTyping(
     dmId: string,
     participants: string[],
-    callback: (typingUids: string[]) => void
+    callback: (typingUids: string[]) => void,
+    onError?: (err: Error) => void
 ) {
     // Listen to each participant's typing status for this DM
     const unsubs: (() => void)[] = [];
     const states: Record<string, boolean> = {};
 
     for (const uid of participants) {
-        const unsubscribe = onValue(typingRef(uid, dmId), (snap) => {
-            states[uid] = snap.val() === true;
-            callback(Object.keys(states).filter((u) => states[u]));
-        });
+        const unsubscribe = onValue(
+            typingRef(uid, dmId),
+            (snap) => {
+                states[uid] = snap.val() === true;
+                callback(Object.keys(states).filter((u) => states[u]));
+            },
+            (err) => onError?.(err)
+        );
         unsubs.push(() => unsubscribe());
     }
 

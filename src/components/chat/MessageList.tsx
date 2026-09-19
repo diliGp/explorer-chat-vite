@@ -14,6 +14,12 @@ interface MessageListProps {
     loading: boolean;
     /** Timestamp the OTHER participant last read (for blue tick read receipts) */
     otherReadAt?: number;
+    /** True when an older page of history is available to fetch */
+    hasMore?: boolean;
+    /** True while a "load older" fetch is in flight */
+    loadingOlder?: boolean;
+    /** Fetches the next page of older history */
+    onLoadOlder?: () => void;
 }
 
 function DateDivider({ date }: { date: Date }) {
@@ -40,18 +46,24 @@ export function MessageList({
     onViewImage,
     loading,
     otherReadAt,
+    hasMore = false,
+    loadingOlder = false,
+    onLoadOlder,
 }: MessageListProps) {
     const bottomRef = useRef<HTMLDivElement>(null);
     const containerRef = useRef<HTMLDivElement>(null);
-    const prevLengthRef = useRef(0);
+    const prevLastIdRef = useRef<string | null>(null);
 
-    // Auto-scroll on new messages
+    // Auto-scroll only when a new message is appended at the tail — prepending an
+    // older page (via "Load earlier") changes messages.length too, but the last
+    // (most recent) id stays the same, so it must not yank the view to the bottom.
     useEffect(() => {
-        if (messages.length > prevLengthRef.current) {
+        const lastId = messages.length > 0 ? messages[messages.length - 1].id : null;
+        if (lastId !== null && lastId !== prevLastIdRef.current) {
             bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
         }
-        prevLengthRef.current = messages.length;
-    }, [messages.length]);
+        prevLastIdRef.current = lastId;
+    }, [messages]);
 
     // Group messages by date
     const groups: { date: Date; messages: Message[] }[] = [];
@@ -109,6 +121,17 @@ export function MessageList({
             aria-live="polite"
             aria-relevant="additions"
         >
+            {hasMore && (
+                <div className="flex justify-center py-2">
+                    <button
+                        onClick={onLoadOlder}
+                        disabled={loadingOlder}
+                        className="text-xs font-medium text-[var(--accent)] hover:underline disabled:opacity-50 px-3 py-1.5"
+                    >
+                        {loadingOlder ? 'Loading…' : 'Load earlier messages'}
+                    </button>
+                </div>
+            )}
             {groups.map((group, gi) => (
                 <div key={gi}>
                     <DateDivider date={group.date} />

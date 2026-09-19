@@ -11,6 +11,14 @@ service cloud.firestore {
       return isSignedIn() && request.auth.uid == uid;
     }
 
+    // Grants access to /admin/reports (see users/{uid}'s update rule below for
+    // why this can't be self-granted). There is no in-app UI to set this flag —
+    // it's set manually via Firebase Console on a per-user basis.
+    function isAdmin() {
+      return isSignedIn()
+        && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('isAdmin', false) == true;
+    }
+
     // ── Feature Flags (read-only for all signed-in users) ─────────────────────
     match /config/{docId} {
       allow read: if isSignedIn();
@@ -28,9 +36,14 @@ service cloud.firestore {
         && request.resource.data.name is string
         && request.resource.data.name.size() >= 1
         && request.resource.data.name.size() <= 50;
+      // isAdmin is pinned to its current value here — without this, any user
+      // could set isAdmin: true on their own profile and grant themselves
+      // access to /admin/reports. It can only be changed via Firebase Console
+      // (which bypasses these rules), never through the app.
       allow update: if isOwner(uid)
         && request.resource.data.uid == resource.data.uid
-        && request.resource.data.createdAt == resource.data.createdAt;
+        && request.resource.data.createdAt == resource.data.createdAt
+        && request.resource.data.get('isAdmin', false) == resource.data.get('isAdmin', false);
       // Allow users to delete their own profile (anon cleanup)
       allow delete: if isOwner(uid);
     }
@@ -52,11 +65,89 @@ service cloud.firestore {
         && request.resource.data.keys().hasAll(['participants', 'participantNames', 'createdAt', 'lastMessageAt'])
         && dmId == [request.resource.data.participants[0], request.resource.data.participants[1]].join('_');
 
+      // ── Message-send metadata update ────────────────────────────────────────
+      // Mirrors the exact transition useMessages.ts (sendDirect / sendWithTransaction
+      // / sendImage) produces: the sender's own streak counter may only advance by
+      // exactly 1, or reset to 1 when the OTHER participant sent last. `bothReplied`
+      // may only flip false -> true, never be unset. Once it's already true the
+      // streak counter is left unconstrained, because permanent-user sends always
+      // reset it to 1 by design (see sendDirect) and the anon rate limit no longer
+      // applies to anyone in this DM anyway once both sides have replied.
+      //
+      // This is what actually closes the client-only rate-limit bypass: previously
+      // ANY update that left `participants` unchanged was accepted, so an anon user
+      // could call updateDoc() directly on the dm doc to reset consecutiveSenderCount
+      // or flip bothReplied without ever passing through useMessages.ts's JS check.
+      function dmSendMetadataUpdateIsValid() {
+        let prevBothReplied = resource.data.get('bothReplied', false);
+        let nextBothReplied = request.resource.data.get('bothReplied', false);
+        let prevCount = resource.data.get('consecutiveSenderCount', 0);
+        let nextCount = request.resource.data.get('consecutiveSenderCount', 0);
+        let prevSender = resource.data.get('lastSenderId', '');
+
+        return request.resource.data.participants == resource.data.participants
+          && request.resource.data.diff(resource.data).affectedKeys()
+              .hasOnly(['lastMessageAt', 'lastMessagePreview', 'lastSenderId', 'consecutiveSenderCount', 'bothReplied'])
+          && request.resource.data.lastSenderId == request.auth.uid
+          && request.resource.data.lastMessageAt >= resource.data.get('lastMessageAt', 0)
+          && (prevBothReplied == nextBothReplied || nextBothReplied == true)
+          && (
+            prevBothReplied == true
+            || (prevSender == request.auth.uid && nextCount == prevCount + 1)
+            || (prevSender != request.auth.uid && nextCount == 1)
+          );
+      }
+
+      // ── clearChat's reset ────────────────────────────────────────────────────
+      // Matches useMessages.ts's clearChat exactly: wipes the streak back to the
+      // pristine "no messages yet" shape. Note: this does NOT verify the messages
+      // subcollection is actually empty (rules can't run aggregate queries), so a
+      // client that crafts this exact payload without deleting messages first can
+      // use it to reset the anon rate limit early. Accepted residual risk — this
+      // limit is an anti-spam UX heuristic scoped to a single 1:1 conversation, not
+      // a boundary protecting other users' data or quota.
+      function dmClearResetIsValid() {
+        return request.resource.data.participants == resource.data.participants
+          && request.resource.data.diff(resource.data).affectedKeys()
+              .hasOnly(['lastMessageAt', 'lastMessagePreview', 'lastSenderId', 'consecutiveSenderCount'])
+          && request.resource.data.lastSenderId == ''
+          && request.resource.data.consecutiveSenderCount == 0
+          && request.resource.data.lastMessagePreview == ''
+          && request.resource.data.lastMessageAt >= resource.data.get('lastMessageAt', 0);
+      }
+
+      // ── Read receipts ────────────────────────────────────────────────────────
+      // Keeps the original (verified-safe) shape check and adds one guarantee:
+      // your own lastReadAt entry must actually be a number. Deliberately does
+      // NOT try to prove no *other* uid's entry moved in the same write (that
+      // needs Map.diff() on a non-document map, which isn't exercised anywhere
+      // else in this ruleset and isn't worth the risk of getting subtly wrong
+      // on a path every DM open touches — see Dm.tsx's lastReadAt write).
+      function dmReadReceiptUpdateIsValid() {
+        return request.resource.data.participants == resource.data.participants
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['lastReadAt'])
+          && request.resource.data.lastReadAt[request.auth.uid] is number;
+      }
+
+      // ── Block list: you may only add/remove your OWN uid ──────────────────────
+      function dmBlockedByUpdateIsValid() {
+        let prev = resource.data.get('blockedBy', []);
+        let next = request.resource.data.get('blockedBy', []);
+        return request.resource.data.participants == resource.data.participants
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['blockedBy'])
+          && (
+            (next.size() == prev.size() + 1 && next.hasAll(prev)
+              && next.hasAny([request.auth.uid]) && !prev.hasAny([request.auth.uid]))
+            || (next.size() == prev.size() - 1 && prev.hasAll(next)
+              && prev.hasAny([request.auth.uid]) && !next.hasAny([request.auth.uid]))
+          );
+      }
+
       allow update: if isParticipant() && (
-          (request.resource.data.participants == resource.data.participants)
-          || request.resource.data.diff(resource.data).affectedKeys().hasOnly(['lastReadAt'])
-          || request.resource.data.diff(resource.data).affectedKeys().hasOnly(['bothReplied'])
-          || request.resource.data.diff(resource.data).affectedKeys().hasOnly(['blockedBy'])
+          dmSendMetadataUpdateIsValid()
+          || dmClearResetIsValid()
+          || dmReadReceiptUpdateIsValid()
+          || dmBlockedByUpdateIsValid()
         );
 
       // Allow participants to delete the DM (anon user cleanup)
@@ -69,31 +160,66 @@ service cloud.firestore {
             && request.auth.uid in get(/databases/$(database)/documents/dms/$(dmId)).data.participants;
         }
 
-        function isNotBlocked() {
-          // Block message create if the sender is in the DM's blockedBy list
-          // (i.e., the other party has blocked them, or they've blocked the other party)
-          let dmData = get(/databases/$(database)/documents/dms/$(dmId)).data;
-          return !(request.auth.uid in (dmData.get('blockedBy', [])));
+        // Single get() covers the participant, block, and rate-limit checks
+        // together — keeps this to exactly one read against the 10-get budget
+        // instead of three separate functions each reading the same dm doc.
+        // This is the actual enforcement of the anon 2-message limit: it no
+        // longer depends on the client running useMessages.ts's transaction at
+        // all, since it reads the DM's committed state directly.
+        function canCreateMessage() {
+          let dm = get(/databases/$(database)/documents/dms/$(dmId)).data;
+          let bothReplied = dm.get('bothReplied', false);
+          let lastSenderId = dm.get('lastSenderId', '');
+          let count = dm.get('consecutiveSenderCount', 0);
+          return request.auth.uid in dm.participants
+            && !(request.auth.uid in dm.get('blockedBy', []))
+            && (bothReplied || lastSenderId != request.auth.uid || count < 2);
         }
 
-        allow read: if isDmParticipant();
+        // isAdmin() lets /admin/reports run a collectionGroup('messages') query
+        // across every DM. Firestore evaluates this same per-document rule for
+        // each result the query returns, so no separate collection-group rule
+        // is needed — this is the actual access control for that view; the
+        // route guard in AdminReports.tsx is cosmetic only.
+        allow read: if isDmParticipant() || isAdmin();
 
-        allow create: if isDmParticipant()
-          && isNotBlocked()
+        allow create: if isSignedIn()
+          && canCreateMessage()
           && request.resource.data.senderId == request.auth.uid
           && request.resource.data.dmId == dmId
           && request.resource.data.keys().hasAll(['senderId', 'senderName', 'type', 'createdAt', 'dmId'])
           && request.resource.data.type in ['text', 'image', 'gif'];
 
-        allow update: if isDmParticipant()
-          && (
-            (request.auth.uid == resource.data.senderId)
-            || request.resource.data.diff(resource.data).affectedKeys()
-                .hasOnly(['mediaViewed', 'mediaRef', 'reportedBy'])
+        // Participant branch: sender can edit anything on their own message;
+        // any participant can additionally patch view-once/report fields
+        // (mediaViewed/mediaRef via viewImage(), reportedBy+isReported via
+        // reportMessage() — both are always written together, see useMessages.ts).
+        //
+        // Admin branch: moderation-only fields, for the /admin/reports view's
+        // "dismiss" (clears isReported/reportedBy) and "delete message"
+        // (deletedAt/text/mediaRef/gifUrl, mirroring the participant
+        // self-delete shape) actions. Admins are typically NOT dm participants,
+        // so this must be a separate top-level branch, not folded into the
+        // isDmParticipant()-gated one above.
+        allow update: if (
+            isDmParticipant()
+            && (
+              (request.auth.uid == resource.data.senderId)
+              || request.resource.data.diff(resource.data).affectedKeys()
+                  .hasOnly(['mediaViewed', 'mediaRef', 'reportedBy', 'isReported'])
+            )
+            && request.resource.data.senderId == resource.data.senderId
+            && request.resource.data.dmId == resource.data.dmId
+            && request.resource.data.createdAt == resource.data.createdAt
           )
-          && request.resource.data.senderId == resource.data.senderId
-          && request.resource.data.dmId == resource.data.dmId
-          && request.resource.data.createdAt == resource.data.createdAt;
+          || (
+            isAdmin()
+            && request.resource.data.diff(resource.data).affectedKeys()
+                .hasOnly(['isReported', 'reportedBy', 'deletedAt', 'text', 'mediaRef', 'gifUrl'])
+            && request.resource.data.senderId == resource.data.senderId
+            && request.resource.data.dmId == resource.data.dmId
+            && request.resource.data.createdAt == resource.data.createdAt
+          );
 
         allow delete: if isDmParticipant();
       }

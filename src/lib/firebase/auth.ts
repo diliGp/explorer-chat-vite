@@ -22,10 +22,55 @@ import {
     updateDoc,
     arrayUnion,
     arrayRemove,
+    DocumentReference,
 } from 'firebase/firestore';
 import { auth, db } from './client';
 import { ref, remove } from 'firebase/database';
 import { rtdb } from './client';
+
+/**
+ * Firestore caps a single WriteBatch at 500 operations. A chatty anon user's
+ * merge (many DMs × many messages) can easily exceed that, so this wrapper
+ * transparently rolls over to a new batch every 500 writes and commits them
+ * sequentially. Not atomic across the whole merge (Firestore batches never are
+ * across >500 ops) — a mid-merge failure can leave partial re-keying, which is
+ * why this is a best-effort client migration and a real candidate for a
+ * Cloud Function if that risk needs to go away entirely.
+ */
+class ChunkedBatch {
+    private batch = writeBatch(db);
+    private count = 0;
+
+    private async rollIfFull() {
+        if (this.count >= 500) {
+            await this.batch.commit();
+            this.batch = writeBatch(db);
+            this.count = 0;
+        }
+    }
+
+    async set(ref: DocumentReference, data: any) {
+        await this.rollIfFull();
+        this.batch.set(ref, data);
+        this.count++;
+    }
+
+    async update(ref: DocumentReference, data: any) {
+        await this.rollIfFull();
+        this.batch.update(ref, data);
+        this.count++;
+    }
+
+    async delete(ref: DocumentReference) {
+        await this.rollIfFull();
+        this.batch.delete(ref);
+        this.count++;
+    }
+
+    async commit() {
+        if (this.count > 0) await this.batch.commit();
+    }
+}
 
 export async function signInAnonymous(): Promise<User> {
     const result = await signInAnonymously(auth);
@@ -93,7 +138,7 @@ async function mergeAnonymousData(anonUid: string, permanentUid: string): Promis
         query(collection(db, 'dms'), where('participants', 'array-contains', anonUid))
     );
 
-    const batch = writeBatch(db);
+    const batch = new ChunkedBatch();
 
     for (const dmDoc of dmsSnap.docs) {
         const dm = dmDoc.data() as any;
@@ -128,7 +173,7 @@ async function mergeAnonymousData(anonUid: string, permanentUid: string): Promis
         if (newDmId !== oldDmId) {
             // New DM doc under the correct ID
             const newDmRef = doc(db, 'dms', newDmId);
-            batch.set(newDmRef, {
+            await batch.set(newDmRef, {
                 ...dm,
                 participants: newParticipants,
                 participantNames: newNames,
@@ -138,7 +183,7 @@ async function mergeAnonymousData(anonUid: string, permanentUid: string): Promis
             // Mark old DM for deletion (handled after batch commit — see below)
         } else {
             // Same ID, just update the maps in place
-            batch.update(dmDoc.ref, {
+            await batch.update(dmDoc.ref, {
                 participants: newParticipants,
                 participantNames: newNames,
                 participantGenders: newGenders,
@@ -161,14 +206,14 @@ async function mergeAnonymousData(anonUid: string, permanentUid: string): Promis
                 if (newDmId !== oldDmId) {
                     // Write message into new DM subcollection
                     const newMsgRef = doc(db, 'dms', newDmId, 'messages', msgDoc.id);
-                    batch.set(newMsgRef, { ...msg, ...updatedFields });
+                    await batch.set(newMsgRef, { ...msg, ...updatedFields });
                 } else {
-                    batch.update(msgDoc.ref, updatedFields);
+                    await batch.update(msgDoc.ref, updatedFields);
                 }
             } else if (newDmId !== oldDmId) {
                 // Message unchanged but needs to move to new DM path
                 const newMsgRef = doc(db, 'dms', newDmId, 'messages', msgDoc.id);
-                batch.set(newMsgRef, msg);
+                await batch.set(newMsgRef, msg);
             }
         }
     }
@@ -179,7 +224,7 @@ async function mergeAnonymousData(anonUid: string, permanentUid: string): Promis
     if (!permanentSnap.exists()) {
         const anonSnap = await getDoc(doc(db, 'users', anonUid));
         if (anonSnap.exists()) {
-            batch.set(permanentProfileRef, {
+            await batch.set(permanentProfileRef, {
                 ...anonSnap.data(),
                 uid: permanentUid,
                 isPermanent: true,
@@ -187,7 +232,7 @@ async function mergeAnonymousData(anonUid: string, permanentUid: string): Promis
         }
     } else {
         // Mark existing profile as permanent
-        batch.update(permanentProfileRef, { isPermanent: true });
+        await batch.update(permanentProfileRef, { isPermanent: true });
     }
 
     await batch.commit();
@@ -202,11 +247,11 @@ async function mergeAnonymousData(anonUid: string, permanentUid: string): Promis
         if (newDmId !== dmDoc.id) {
             // Delete old messages subcollection first
             const msgsSnap = await getDocs(collection(db, 'dms', dmDoc.id, 'messages'));
-            const deleteBatch = writeBatch(db);
+            const deleteBatch = new ChunkedBatch();
             for (const m of msgsSnap.docs) {
-                deleteBatch.delete(m.ref);
+                await deleteBatch.delete(m.ref);
             }
-            deleteBatch.delete(dmDoc.ref);
+            await deleteBatch.delete(dmDoc.ref);
             await deleteBatch.commit();
         }
     }
@@ -336,6 +381,25 @@ export async function logout(isAnon = false, uid?: string) {
     } else {
         await signOut(auth);
     }
+}
+
+/**
+ * Ends the current session WITHOUT deleting any data — used by the inactivity
+ * auto-logout in useAuth.ts. Unlike logout()'s anonymous branch, this never
+ * calls deleteAnonUser(): a few idle minutes shouldn't silently destroy a
+ * guest's chat history the way an explicit "Leave & delete" click does.
+ *
+ * For an anonymous user this still effectively abandons that identity —
+ * Firebase anonymous credentials can't be signed back into once discarded, so
+ * their profile/DMs/messages become orphaned in Firestore rather than deleted.
+ * That's an accepted trade-off (see AGENTS.md), not a bug: the alternative
+ * (destroying the conversation on every idle timeout) is worse.
+ *
+ * onAuthChange's listener in useAuth.ts automatically establishes a fresh
+ * anonymous session right after this resolves, same as any other sign-out.
+ */
+export async function signOutPreservingData(): Promise<void> {
+    await signOut(auth);
 }
 
 export function currentUser() {

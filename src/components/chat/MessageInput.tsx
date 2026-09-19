@@ -94,25 +94,38 @@ export function MessageInput({
     };
 
     const handleSend = useCallback(async () => {
-        if (!text.trim() || sending || isRateLimited) return;
-        setSending(true);
+        if (!text.trim() || isRateLimited) return;
+        const trimmed = text.trim();
+        const pendingReply = replyTo ?? undefined;
+
+        // Optimistic: clear the composer right away instead of waiting on the
+        // network round trip. The sent message itself appears via Firestore's
+        // local-cache echo almost immediately regardless (see useMessages.ts's
+        // commitMessage) — there's no reason to also make the user wait here
+        // before they can type their next message. Not gating on a `sending`
+        // flag is deliberate: since `text` is now empty, the button/Enter-key
+        // path naturally can't double-submit the same message.
+        setText('');
+        onCancelReply();
+        if (textareaRef.current) textareaRef.current.style.height = 'auto';
         stopTyping();
+
         try {
-            const trimmed = text.trim();
             // Auto-detect GIF URLs pasted in
             if (isGifUrl(trimmed)) {
-                await onSendGif(trimmed, replyTo ?? undefined);
+                await onSendGif(trimmed, pendingReply);
             } else {
-                await onSendText(trimmed, replyTo ?? undefined);
+                await onSendText(trimmed, pendingReply);
             }
-            setText('');
-            onCancelReply();
-            if (textareaRef.current) textareaRef.current.style.height = 'auto';
+        } catch {
+            // Send failed (rate-limited, offline, etc.) — restore what the user
+            // typed so it isn't silently lost. Dm.tsx's handlers already toast
+            // the reason before rethrowing.
+            setText(trimmed);
         } finally {
-            setSending(false);
             textareaRef.current?.focus();
         }
-    }, [text, sending, isRateLimited, replyTo, onSendText, onSendGif, onCancelReply, stopTyping]);
+    }, [text, isRateLimited, replyTo, onSendText, onSendGif, onCancelReply, stopTyping]);
 
     const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
         const file = e.target.files?.[0];

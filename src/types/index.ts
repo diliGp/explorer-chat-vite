@@ -18,6 +18,10 @@ export interface UserProfile {
     isBlocked: boolean;
     reportCount: number;
     blockedUsers: string[];
+    /** Grants access to /admin/reports. Set manually via Firebase Console —
+     *  there is no in-app UI to grant this, and firestore.rules pins this field
+     *  so users can't set it on themselves. */
+    isAdmin?: boolean;
 }
 
 export interface Presence {
@@ -50,6 +54,12 @@ export interface Message {
     createdAt: number;
     deletedAt?: number;
     reportedBy?: string[];
+    /** Indexed query flag mirroring `reportedBy.length > 0` — Firestore can't
+     *  query "array is non-empty" directly. `reportedBy.length` remains the
+     *  single source of truth for the *count*; this field only gates the
+     *  admin moderation query. Messages reported before this field existed
+     *  won't have it set — see AGENTS.md for the backfill note. */
+    isReported?: boolean;
 }
 
 export interface DM {

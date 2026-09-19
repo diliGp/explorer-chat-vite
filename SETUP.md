@@ -1,7 +1,10 @@
 # ChatApp — Setup & Deployment Guide
 
-> Next.js 15 · React 19 · Firebase 12 · Node 26  
+> Vite 6 + React Router 7 · React 19 · Firebase 12 · Node
 > Estimated time to production: **~45 minutes** on first setup
+
+This is a client-only SPA (no Node server). `npm run build` outputs static
+files to `dist/`, which is what actually gets deployed — see Step 7.
 
 ---
 
@@ -9,13 +12,13 @@
 
 | Layer | Technology | Version |
 |-------|-----------|---------|
-| Framework | Next.js (App Router) | 15.5.18 |
-| UI | React | 19.2.6 |
+| Build tool | Vite | 6.x |
+| Routing | React Router (client-side) | 7.x |
+| UI | React | 19.x |
 | Language | TypeScript | 5.8.3 |
 | Styling | Tailwind CSS | 3.4.17 |
 | Backend | Firebase | 12.13.0 |
 | State | Zustand | 5.0.13 |
-| Runtime | Node.js | 26.x |
 
 ---
 
@@ -23,12 +26,12 @@
 
 | Tool | Min version | Notes |
 |------|-------------|-------|
-| Node.js | 26.x | `node -v` — use `nvm use 26` if using nvm |
-| npm | 11.x | comes with Node 26 |
+| Node.js | `>=20.9.0` per `package.json`'s `engines` field; `.nvmrc` pins `26` for local dev consistency | `node -v` — use `nvm use` if using nvm |
+| npm | comes with your Node install | |
 | Firebase CLI | 12.x | `npm install -g firebase-tools` |
 | Google account | — | for Firebase Console access |
 
-> **nvm users:** A `.nvmrc` file is included. Run `nvm use` in the project root to auto-switch to Node 26.
+> **nvm users:** A `.nvmrc` file is included. Run `nvm use` in the project root to auto-switch.
 
 ---
 
@@ -122,28 +125,30 @@ Stores view-once images (auto-deleted after viewing).
 
 ## Step 4 — Configure Environment Variables
 
-Edit `.env.local` with your real values:
+Copy `.env.local.example` to `.env.local` and fill in your real values:
 
 ```env
-NEXT_PUBLIC_FIREBASE_API_KEY=AIzaSy...
-NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN=your-project.firebaseapp.com
-NEXT_PUBLIC_FIREBASE_PROJECT_ID=your-project-id
-NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET=your-project.appspot.com
-NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID=123456789
-NEXT_PUBLIC_FIREBASE_APP_ID=1:123456789:web:abc123
-NEXT_PUBLIC_FIREBASE_DATABASE_URL=https://your-project-default-rtdb.firebaseio.com
+VITE_FIREBASE_API_KEY=AIzaSy...
+VITE_FIREBASE_AUTH_DOMAIN=your-project.firebaseapp.com
+VITE_FIREBASE_PROJECT_ID=your-project-id
+VITE_FIREBASE_STORAGE_BUCKET=your-project.appspot.com
+VITE_FIREBASE_MESSAGING_SENDER_ID=123456789
+VITE_FIREBASE_APP_ID=1:123456789:web:abc123
+VITE_FIREBASE_DATABASE_URL=https://your-project-default-rtdb.firebaseio.com
 
 # Tenor GIF API — free key from https://developers.google.com/tenor
-NEXT_PUBLIC_TENOR_API_KEY=your_tenor_api_key
+VITE_TENOR_API_KEY=your_tenor_api_key
 ```
 
-> **Note:** All `NEXT_PUBLIC_` variables are bundled into client-side JS.  
-> Never put secret keys (service account, etc.) in `NEXT_PUBLIC_` vars.
+> **Note:** This is a Vite app, so client-exposed vars must use the `VITE_`
+> prefix (not `NEXT_PUBLIC_`) to be readable via `import.meta.env` — see
+> `src/lib/firebase/client.ts`. All `VITE_` variables are bundled into
+> client-side JS. Never put secret keys (service account, etc.) in them.
 
 ### Get a Tenor API Key
 1. Go to [developers.google.com/tenor](https://developers.google.com/tenor)
 2. Sign in → **Get started** → create a project
-3. Copy the **API key** → paste into `NEXT_PUBLIC_TENOR_API_KEY`
+3. Copy the **API key** → paste into `VITE_TENOR_API_KEY`
 
 ---
 
@@ -174,12 +179,12 @@ This deploys:
 ## Step 6 — Run Locally
 
 ```bash
-nvm use        # switches to Node 26 via .nvmrc
+nvm use        # switches Node version via .nvmrc
 npm install
 npm run dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000)
+Open [http://localhost:5173](http://localhost:5173) (Vite's default dev port)
 
 **First-run flow:**
 1. Age gate + profile form (name, age, gender, country)
@@ -191,76 +196,48 @@ Open [http://localhost:3000](http://localhost:3000)
 
 ## Step 7 — Deploy to Production
 
-### Option A: Vercel (Recommended — easiest)
+Since this is a static Vite build, deployment is just "build, then upload
+`dist/` to any static host." `firebase.json` and `.firebaserc` are already
+configured for this app (`public: "dist"`, SPA rewrite to `/index.html`,
+project alias `ex-chat-beedd`), so Firebase Hosting is the path of least
+resistance and needs no extra config.
 
-1. Push your code to a GitHub repository
-2. Go to [vercel.com](https://vercel.com) → **New Project** → import repo
-3. Add environment variables in Vercel dashboard:
-   - Settings → **Environment Variables** → paste all values from `.env.local`
-4. Set **Node.js version** to **22.x** or **20.x** in Vercel project settings (Node 26 not yet on Vercel — either works fine)
-5. Click **Deploy**
-
-Vercel auto-detects Next.js and configures everything. Deploys on every `git push`.
-
-**Custom domain:** Vercel → project → **Domains** → add your domain → update DNS.
-
-### Option B: Google Cloud Run (GCP)
-
-#### Create Dockerfile
-
-```dockerfile
-FROM node:26-alpine AS builder
-WORKDIR /app
-COPY package*.json ./
-RUN npm ci
-COPY . .
-RUN npm run build
-
-FROM node:26-alpine AS runner
-WORKDIR /app
-ENV NODE_ENV=production
-COPY --from=builder /app/public ./public
-COPY --from=builder /app/.next/standalone ./
-COPY --from=builder /app/.next/static ./.next/static
-EXPOSE 3000
-CMD ["node", "server.js"]
-```
-
-Add `output: 'standalone'` to `next.config.mjs`:
-```js
-const nextConfig = {
-  output: 'standalone',
-  images: { remotePatterns: [...] },
-  reactStrictMode: true,
-}
-```
+### Option A: Firebase Hosting (already configured — recommended)
 
 ```bash
-# Build and push to Google Artifact Registry
-gcloud auth login
-gcloud config set project YOUR_PROJECT_ID
-
-# Create Artifact Registry repo (one-time)
-gcloud artifacts repositories create chatapp \
-  --repository-format=docker \
-  --location=us-central1
-
-# Build + push
-gcloud builds submit --tag us-central1-docker.pkg.dev/YOUR_PROJECT_ID/chatapp/app:latest
-
-# Deploy to Cloud Run
-gcloud run deploy chatapp \
-  --image us-central1-docker.pkg.dev/YOUR_PROJECT_ID/chatapp/app:latest \
-  --platform managed \
-  --region us-central1 \
-  --allow-unauthenticated \
-  --set-env-vars "NEXT_PUBLIC_FIREBASE_API_KEY=...,NEXT_PUBLIC_FIREBASE_PROJECT_ID=..."
+npm run build                              # -> dist/
+firebase deploy --only hosting             # uses firebase.json + .firebaserc
 ```
 
-> Tip: Store env vars in **Secret Manager** and reference them via `--set-secrets` for better security.
+That's it — no Dockerfile, no server, no `output: 'standalone'` (this isn't
+Next.js). You can deploy hosting together with the security rules in one
+command:
 
-### Option C: Firebase Hosting
-Next.js 15 App Router with server components cannot be statically exported to Firebase Hosting directly. Use Vercel (Option A) or Cloud Run (Option B).
+```bash
+firebase deploy --only hosting,firestore,database,storage
+```
+
+**Custom domain:** Console → **Hosting** → **Add custom domain** → follow the
+DNS verification steps.
+
+**CI/CD:** `firebase-tools` supports GitHub Actions out of the box —
+`firebase init hosting:github` scaffolds a workflow that builds and deploys
+`dist/` on every push, if you want that instead of deploying by hand.
+
+### Option B: Any other static host (Vercel, Netlify, Cloudflare Pages, S3+CDN, …)
+
+Since `dist/` is a plain static SPA build, any static host works:
+
+1. Build command: `npm run build`
+2. Output directory: `dist`
+3. Set the same `VITE_*` environment variables from `.env.local` in the host's
+   dashboard (build-time — Vite inlines them at build, not at runtime)
+4. Configure an SPA fallback/rewrite (all paths → `/index.html`) — most static
+   hosts have a one-line config option for this; without it, deep links like
+   `/dm/<id>` will 404 on refresh.
+
+There is no framework auto-detection needed since there's no framework-specific
+server — it's a static bundle like any other Vite/CRA/plain SPA output.
 
 ---
 
@@ -285,7 +262,8 @@ Next.js 15 App Router with server components cannot be statically exported to Fi
 ```
 /users/{uid}
   uid, name, age, gender, country, city?, isPermanent,
-  isOnline, lastSeen, createdAt, blockedUsers[], reportCount
+  isOnline, lastSeen, createdAt, blockedUsers[], reportCount,
+  isAdmin?   # grants /admin/reports access — console-only, see Moderation below
 
 /dms/{dmId}                    # dmId = [uid1, uid2].sort().join('_')
   participants[], participantNames{}, participantGenders{},
@@ -296,7 +274,7 @@ Next.js 15 App Router with server components cannot be statically exported to Fi
 /dms/{dmId}/messages/{msgId}
   dmId, senderId, senderName, type (text|image|gif),
   text?, gifUrl?, mediaRef?, mediaThumbnail?, mediaViewed,
-  replyTo?, createdAt, deletedAt?, reportedBy[]
+  replyTo?, createdAt, deletedAt?, reportedBy[], isReported?
 ```
 
 ### Realtime Database (live ephemeral state)
@@ -346,14 +324,35 @@ The user lands on their permanent account with all previous chat history intact.
 
 ---
 
+## Moderation
+
+Users can report a message (writes `reportedBy`/`isReported` on the message
+doc). To review reports:
+
+1. Grant yourself admin access: Firestore Console → `users/{your-uid}` → add
+   field `isAdmin` (boolean) = `true`. There is no in-app way to do this —
+   `firestore.rules` deliberately blocks users from setting this on themselves.
+2. Open `/admin/reports` in the app (a "Reports" link appears in the sidebar
+   footer once your profile has `isAdmin: true`).
+3. Dismiss a report or delete the message directly from that view.
+
+This requires the `messages` collection-group index in
+`firestore.indexes.json` (`isReported` + `createdAt`) to be deployed — see
+Step 5. Messages reported before `isReported` existed won't appear (no
+backfill has been run); see `AGENTS.md`'s Moderation section for details.
+
+---
+
 ## Known Limitations & Future Improvements
 
 | Item | Status | Notes |
 |------|--------|-------|
-| Image expiry (view-once) | Client-side | Deleted via `setTimeout(5s)` after view. A Cloud Function triggered on `mediaViewed: true` write would be more reliable. |
-| Message pagination | Fixed 50 | `recentMessages()` fetches the last 50. Add cursor-based pagination for long conversations. |
+| Image expiry (view-once) | Client-side | Deleted via `setTimeout(5s)` after view. Closing the tab within that window leaks the Storage object — a Cloud Function scheduled sweep would close this gap fully. |
+| Message pagination | ✅ Built | `recentMessages()` streams the live tail (50 most recent); `loadOlderMessages()` in `useMessages.ts` cursor-paginates further back on demand ("Load earlier messages" in the UI). |
 | Push notifications | Not built | Firebase Cloud Messaging (FCM) can add web push. Requires a service worker. |
-| Anonymous send rate-limit | ✅ Built | Anonymous users can send at most 2 consecutive unanswered messages per DM. Enforced client-side (transaction) and server-side (Firestore rule). Resets automatically when the other participant replies. Permanent users are exempt. |
+| Anonymous send rate-limit | ✅ Built | Anonymous users can send at most 2 consecutive unanswered messages per DM. Client-side is a fast, non-blocking precheck (`useMessages.ts`'s `commitMessage`); `firestore.rules` is the actual enforcement. Resets automatically when the other participant replies. Permanent users are exempt. |
+| Reported message moderation | ✅ Built | `/admin/reports` — see the Moderation section above. No admin-management UI (console-only) and no backfill for reports made before `isReported` existed. |
+| Session inactivity auto-logout | ✅ Built | Signs out after 5 min of no activity by default; remote-configurable via `config/featureFlags.inactivityLogoutMinutes` (Firebase Console, no redeploy — `<= 0` disables it). See `AGENTS.md`'s Session Inactivity Auto-Logout section. Never wipes an anonymous user's data — only the explicit "Leave & delete" button does that. |
 | Spam rate limiting | Not built | Global write-rate limits (e.g. max N messages/minute) via Cloud Function or Firestore rules. |
 | CSAM detection | Not built | Integrate Google Cloud Vision SafeSearch API on image upload Cloud Function. |
 | Ad slots | Placeholder only | Replace `<AdSlot>` components with real Google AdSense `<ins>` tags once approved. |
@@ -365,14 +364,14 @@ The user lands on their permanent account with all previous chat history intact.
 
 | Variable | Required | Description |
 |----------|----------|-------------|
-| `NEXT_PUBLIC_FIREBASE_API_KEY` | ✅ | Firebase web API key |
-| `NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN` | ✅ | `your-project.firebaseapp.com` |
-| `NEXT_PUBLIC_FIREBASE_PROJECT_ID` | ✅ | Firebase project ID |
-| `NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET` | ✅ | `your-project.appspot.com` |
-| `NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID` | ✅ | FCM sender ID |
-| `NEXT_PUBLIC_FIREBASE_APP_ID` | ✅ | Firebase app ID |
-| `NEXT_PUBLIC_FIREBASE_DATABASE_URL` | ✅ | RTDB URL — required for presence & typing indicators |
-| `NEXT_PUBLIC_TENOR_API_KEY` | ✅ | Tenor GIF search (free tier: 10 req/s) |
+| `VITE_FIREBASE_API_KEY` | ✅ | Firebase web API key |
+| `VITE_FIREBASE_AUTH_DOMAIN` | ✅ | `your-project.firebaseapp.com` |
+| `VITE_FIREBASE_PROJECT_ID` | ✅ | Firebase project ID |
+| `VITE_FIREBASE_STORAGE_BUCKET` | ✅ | `your-project.appspot.com` |
+| `VITE_FIREBASE_MESSAGING_SENDER_ID` | ✅ | FCM sender ID |
+| `VITE_FIREBASE_APP_ID` | ✅ | Firebase app ID |
+| `VITE_FIREBASE_DATABASE_URL` | ✅ | RTDB URL — required for presence & typing indicators |
+| `VITE_TENOR_API_KEY` | ✅ | Tenor GIF search (free tier: 10 req/s) |
 
 ---
 
@@ -382,7 +381,7 @@ The user lands on their permanent account with all previous chat history intact.
 → Firebase rules not deployed yet. Run `firebase deploy --only firestore,database,storage`
 
 **Users don't go offline when closing the tab**  
-→ RTDB `onDisconnect()` requires the `NEXT_PUBLIC_FIREBASE_DATABASE_URL` to be set. Check `.env.local` and verify the RTDB service is enabled in Firebase Console.
+→ RTDB `onDisconnect()` requires the `VITE_FIREBASE_DATABASE_URL` to be set. Check `.env.local` and verify the RTDB service is enabled in Firebase Console.
 
 **Typing indicator not updating**  
 → Check RTDB URL in `.env.local`. Open Firebase Console → Realtime Database → verify `/typing` nodes appear when typing.
@@ -391,13 +390,13 @@ The user lands on their permanent account with all previous chat history intact.
 → Add your domain to Firebase Console → Authentication → Settings → Authorized domains.
 
 **GIFs not loading**  
-→ Tenor API key missing or invalid. Check `NEXT_PUBLIC_TENOR_API_KEY`. Test: `curl "https://tenor.googleapis.com/v2/search?q=hello&key=YOUR_KEY&limit=1"`
+→ Tenor API key missing or invalid. Check `VITE_TENOR_API_KEY`. Test: `curl "https://tenor.googleapis.com/v2/search?q=hello&key=YOUR_KEY&limit=1"`
 
 **Images not uploading**  
 → Check Storage rules are deployed. Check browser console for CORS errors. Firebase Storage has CORS configured by default for web — no extra setup needed.
 
 **Wrong Node version**  
-→ Run `nvm use` in the project root. Requires Node 26 (`nvm install 26` if missing).
+→ Run `nvm use` in the project root. `package.json`'s `engines` field requires `>=20.9.0`; `.nvmrc` pins `26` for local dev consistency (`nvm install 26` if missing).
 
 **Anonymous user input stays locked after other user replies**  
 → The DM doc is subscribed via `onSnapshot` — the unlock is real-time. If it doesn't unlock, check that `consecutiveSenderCount` reset correctly in Firestore Console → `dms/{dmId}` document. If the field is missing on old DM docs, run a one-time migration or manually set `lastSenderId: ""` and `consecutiveSenderCount: 0`.
